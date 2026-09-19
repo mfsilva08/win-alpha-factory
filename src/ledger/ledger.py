@@ -10,7 +10,7 @@ Regras (SPEC-fase-1 §1.7, R4, R7, ADR-010):
 - Uma única conexão, ``journal_mode=WAL``, ``synchronous=FULL`` e uma transação
   ``BEGIN IMMEDIATE`` por append. O ``prev_hash`` é lido dentro da transação.
 - ``count()`` conta tentativas: ``backtest`` e ``holdout``, inclusive ``crashed``.
-  ``kill`` e ``daily`` são registros operacionais e nunca contam.
+  ``kill``, ``daily``, ``hypothesis`` e ``verdict`` nunca contam.
 """
 
 from __future__ import annotations
@@ -55,10 +55,14 @@ class Kind(StrEnum):
     HOLDOUT = "holdout"
     KILL = "kill"
     DAILY = "daily"
+    HYPOTHESIS = "hypothesis"  # hipótese aceita pela validação determinística
+    VERDICT = "verdict"  # o veredito categórico de cada tentativa de fórmula
 
 
 TRIAL_KINDS: frozenset[Kind] = frozenset({Kind.BACKTEST, Kind.HOLDOUT})
-_PAYLOAD_KINDS: frozenset[Kind] = frozenset({Kind.KILL, Kind.DAILY})
+_PAYLOAD_KINDS: frozenset[Kind] = frozenset(
+    {Kind.KILL, Kind.DAILY, Kind.HYPOTHESIS, Kind.VERDICT}
+)
 
 
 def sha256_hex(data: bytes) -> str:
@@ -227,6 +231,10 @@ class Ledger:
                 raise InvalidRecord(f"{rec.kind.value} exige hypothesis_id")
             if rec.crashed:
                 raise InvalidRecord(f"{rec.kind.value} não pode ser crashed")
+            if rec.kind is Kind.VERDICT and rec.verdict is None:
+                raise InvalidRecord("verdict exige o veredito")
+            if rec.kind is Kind.HYPOTHESIS and rec.payload is None:
+                raise InvalidRecord("hypothesis exige o payload com a hipótese")
         if rec.payload is not None and rec.kind not in _PAYLOAD_KINDS:
             raise InvalidRecord(f"{rec.kind.value} não carrega payload")
 

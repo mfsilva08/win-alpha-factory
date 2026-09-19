@@ -123,12 +123,13 @@ depois `router`, depois `budgets`, depois `graph`.
 **Spec:** `SPEC-fase-3-agentes.md` seções 3.6 a 3.11
 
 **Aceite:**
-- [ ] `ucb` com os valores da spec escolhe `INTERMERCADO_SP500` no cenário de teste
-- [ ] Recompensa nunca usa Sharpe nem PnL
-- [ ] Schema de tool use contém apenas os operadores da hipótese atual
-- [ ] Hipótese com `who_pays` circular é rejeitada sem consumir tentativa global
-- [ ] Auditoria de 50 payloads: nenhum número derivado de backtest
-- [ ] `count()` não cresce em retry de `INVALID_AST`
+- [x] `ucb` com os valores da spec escolhe `INTERMERCADO_SP500` no cenário de teste
+- [x] Recompensa nunca usa Sharpe nem PnL
+- [x] Schema de tool use contém apenas os operadores da hipótese atual
+- [x] Hipótese com `who_pays` circular é rejeitada sem consumir tentativa global
+- [x] Auditoria de 50 payloads: nenhum número derivado de backtest (automatizada)
+- [x] `count()` não cresce em retry de `INVALID_AST`
+- [ ] Rodada real contra a API da Anthropic — exige credencial configurada
 
 ---
 

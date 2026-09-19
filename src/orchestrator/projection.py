@@ -20,9 +20,9 @@ import json
 import math
 import re
 from dataclasses import dataclass, fields
-from typing import Any, Literal, overload
+from typing import Literal, overload
 
-from src.agents.schemas import Hypothesis, format_duration
+from src.agents.schemas import Hypothesis, constraints_to_dict, hypothesis_to_dict
 from src.backtest.metrics import FoldMetrics
 from src.dsl.ast import Constraints, Node
 from src.dsl.canonical import serialize
@@ -84,55 +84,18 @@ def project(
 # ---------------------------------------------------------------- serialização
 
 
-def _constraints(c: Constraints) -> dict[str, Any]:
-    return {
-        "allowed_ops": sorted(op.name for op in c.allowed_ops),
-        "forbidden_ops": sorted(op.name for op in c.forbidden_ops),
-        "max_window": c.max_window,
-        "max_depth": c.max_depth,
-        "max_nodes": c.max_nodes,
-        "max_free_params": c.max_free_params,
-        "required_refs": sorted(c.required_refs),
-        "session_mask": list(c.session_mask) if c.session_mask else None,
-    }
-
-
-def _hypothesis(h: Hypothesis) -> dict[str, Any]:
-    k = h.kill_condition
-    return {
-        "id": h.id,
-        "family": h.family,
-        "claim": h.claim,
-        "who_pays": h.who_pays,
-        "observable": h.observable,
-        "direction": h.direction.value,
-        "horizon": format_duration(h.horizon),
-        "session_window": list(h.session_window),
-        "regime_filter": h.regime_filter,
-        "kill_condition": {
-            "metric": k.metric,
-            "aggregation": k.aggregation,
-            "window_days": k.window_days,
-            "operator": k.operator,
-            "threshold": k.threshold,
-            "unit": k.unit,
-        },
-        "dsl_constraints": _constraints(h.dsl_constraints),
-    }
-
-
 def serialize_for_api(view: ResearchView) -> str:
     """JSON determinístico com a lista fechada de campos da ``ResearchView``."""
     if type(view) is not ResearchView:
         raise TypeError("só ResearchView pode ser enviada à API de pesquisa")
     body = {
-        "hypothesis": _hypothesis(view.hypothesis),
+        "hypothesis": hypothesis_to_dict(view.hypothesis),
         "formula": serialize(view.formula_ast) if view.formula_ast is not None else None,
         "verdict": view.verdict.value if view.verdict is not None else None,
         "detail": view.detail,
         "attempt": view.attempt,
         "blocked_sigs": sorted(view.blocked_sigs),
-        "constraints": _constraints(view.constraints),
+        "constraints": constraints_to_dict(view.constraints),
     }
     return json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 

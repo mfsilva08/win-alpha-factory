@@ -36,7 +36,7 @@ src/
   backtest/     engine.py api_engine.py runner.py metrics.py costs.py errors.py
                 (folds, execução e dados rodam na API externa — SPEC-fase-2 §2.0)
   gate/         dsr.py pbo.py robustness.py collapse.py config.py errors.py
-  orchestrator/ state.py projection.py router.py graph.py budgets.py events.py
+  orchestrator/ state.py projection.py router.py graph.py budgets.py events.py session.py
   agents/       hypothesis.py formula.py schemas.py client.py
   codegen/      transpiler.py parity.py telemetry.py templates/robo.mq5.j2
   ops/          coletor.py alerts.py

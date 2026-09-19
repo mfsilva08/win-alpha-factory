@@ -196,6 +196,10 @@ class Family:
 Escrito à mão. O sistema nunca cria uma família. Comece com três; as oito completas,
 com os conjuntos de operadores já definidos, estão em `catalogo-completo.md`.
 
+Implementação: `FAMILIES` transcreve as oito; `STARTER` são as três recomendadas;
+`select(nomes)` escolhe o catálogo da sessão; `catalog_sha256(famílias)` é o hash
+canônico que entra no `config_hash` do gênesis. `session_hint` é `("HH:MM", "HH:MM")`.
+
 ## 3.7 `catalog/reward.py` e `bandit.py`
 
 ```python
@@ -224,6 +228,10 @@ def pick(families: list[Family], ledger: Ledger) -> Family:
 lucro — é a única medida que pode atravessar o firewall sem contaminá-lo. Chegar ao
 gate significa que a família produziu hipóteses falseáveis, fórmulas bem-tipadas,
 originais e economicamente viáveis.
+
+Um *pull* do bandit é um registro `kind='verdict'` do livro-razão (o veredito de
+cada tentativa de fórmula, com a família no payload). Empate de UCB fica com a
+família que vem primeiro no catálogo.
 
 **Nunca use Sharpe nem PnL como recompensa.** Isso derruba o firewall por dentro: a
 escolha da família passaria a carregar informação de desempenho.
@@ -287,6 +295,14 @@ Validações determinísticas após a emissão, nesta ordem:
 
 Falha em qualquer uma → nova tentativa, sem consumir tentativa global.
 
+Implementação (`agents/hypothesis.py`): o modelo propõe só texto, direção,
+horizonte, janela e `kill_condition`. **Família, id e `dsl_constraints` vêm do
+código** (`constraints_for`: operadores da família, `max_window` 120,
+`max_depth` 4, `max_nodes` 12, `max_free_params` 3, referências exigidas = dados
+da família). "Quem paga" é circular se, sem artigos e preposições, só sobram
+palavras genéricas (mercado, traders, reversão, tendência, investidores…). Até 5
+propostas por hipótese; a aceita vira `kind='hypothesis'` com a `semantic_key`.
+
 ## 3.10 `agents/formula.py`
 
 Entrada: `ResearchView`. Nada além dela.
@@ -305,12 +321,31 @@ Efeito do veredito recebido na tentativa anterior:
 | `PROOF_FAILED` | goal state completo volta; retry |
 | `FAILED_GATE` | hipótese encerrada; não há próxima tentativa |
 
+Implementação (`agents/formula.py`): `COST_DOMINATED` sobe o horizonte da
+hipótese para o próximo bucket de Fibonacci em minutos, limitado ao máximo da
+família. `REDUNDANT` vale para assinatura bloqueada na tentativa **ou** já vista
+no livro-razão. Todo veredito de fórmula é gravado como `kind='verdict'`.
+
 ## 3.11 `agents/client.py`
 
 - Uma chamada por nó, por iteração. Nunca duas
 - Timeout e retry por erro de rede contam como a mesma chamada
 - Todo payload enviado passa por `assert_no_metrics(payload)` antes do envio.
   Falha ali é `AssertionError`, não warning
+
+Implementação (`agents/client.py`): SDK oficial `anthropic`, modelo padrão
+`claude-opus-5`, `client.beta.messages.create` com tool use forçado
+(`tool_choice: {type: "tool"}`) e a ferramenta da tentativa, `effort: high`.
+**Fallback de recusa do servidor ligado por padrão** (`fallbacks="default"`,
+beta `server-side-fallback-2026-07-01`): numa recusa por política, a API refaz a
+requisição em outro modelo. Desligável em `ClientConfig(server_fallback=False)`.
+Credenciais são do SDK (`ANTHROPIC_API_KEY` ou `ant auth login`); o código nunca
+lê chave. A API não aceita semente: o replay usa as respostas gravadas.
+
+A sessão (`orchestrator/session.py`) monta os nós reais: hipótese pronta antes do
+grafo, fórmula pelo agente, prova `SKIPPED` (ADR-006), backtest pelo `runner`,
+gate por `collapse` com `aggregate` e `var_sr` **injetados** — sem eles a sessão
+recusa começar (`GatePending`), porque são decisões pendentes do M4.
 
 ---
 

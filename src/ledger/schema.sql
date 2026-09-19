@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS ledger (
   seq            INTEGER PRIMARY KEY AUTOINCREMENT,
   trial_id       TEXT NOT NULL,
   kind           TEXT NOT NULL
-                 CHECK(kind IN ('genesis','backtest','holdout','kill','daily')),
+                 CHECK(kind IN ('genesis','backtest','holdout','kill','daily',
+                              'hypothesis','verdict')),
   hypothesis_id  TEXT,
   ast_hash       TEXT,
   structural_sig TEXT,
@@ -13,7 +14,7 @@ CREATE TABLE IF NOT EXISTS ledger (
   config_hash    TEXT NOT NULL,
   verdict        TEXT,
   crashed        INTEGER NOT NULL DEFAULT 0 CHECK(crashed IN (0, 1)),
-  payload        TEXT,           -- JSON canônico; genesis, kill e daily
+  payload        TEXT,           -- JSON canônico; genesis, kill, daily, hypothesis, verdict
   prev_hash      TEXT NOT NULL,
   row_hash       TEXT NOT NULL,
   ts             TEXT NOT NULL

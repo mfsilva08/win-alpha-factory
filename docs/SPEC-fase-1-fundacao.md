@@ -336,6 +336,12 @@ CREATE UNIQUE INDEX idx_one_genesis ON ledger(kind) WHERE kind = 'genesis';
 | `holdout` | **sim** | `ast_hash`, `structural_sig`; `data_hash` do hold-out | proibido |
 | `kill` | não | `hypothesis_id`; nunca `crashed` | valor agregado, data, métrica |
 | `daily` | não | `hypothesis_id`; nunca `crashed` | o `DailySummary` do coletor |
+| `hypothesis` | não | `hypothesis_id` e `payload` | a hipótese aceita + `semantic_key` |
+| `verdict` | não | `hypothesis_id` e `verdict` | `{family, attempt}` — o que o bandit lê |
+
+Os dois últimos entraram no M6: o gate não tinha onde gravar o veredito (o
+backtest é gravado **antes** do gate), e vereditos de fórmula como `INVALID_AST`
+nunca chegam ao backtest, mas o bandit precisa deles.
 
 Todo registro precisa ter o `config_hash` do gênesis, ou `append` levanta
 `ProjectMismatch`: mudar o pré-registro ou o catálogo é outro projeto.

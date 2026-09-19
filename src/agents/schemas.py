@@ -167,3 +167,41 @@ def load_hypothesis(path: Path) -> Hypothesis:
     if not isinstance(raw, dict):
         raise SchemaError(f"{path}: esperado mapeamento YAML")
     return hypothesis_from_dict(raw)
+
+
+def constraints_to_dict(c: Constraints) -> dict[str, Any]:
+    return {
+        "allowed_ops": sorted(op.name for op in c.allowed_ops),
+        "forbidden_ops": sorted(op.name for op in c.forbidden_ops),
+        "max_window": c.max_window,
+        "max_depth": c.max_depth,
+        "max_nodes": c.max_nodes,
+        "max_free_params": c.max_free_params,
+        "required_refs": sorted(c.required_refs),
+        "session_mask": list(c.session_mask) if c.session_mask else None,
+    }
+
+
+def hypothesis_to_dict(h: Hypothesis) -> dict[str, Any]:
+    """Forma canônica da hipótese; ``hypothesis_from_dict`` a lê de volta."""
+    k = h.kill_condition
+    return {
+        "id": h.id,
+        "family": h.family,
+        "claim": h.claim,
+        "who_pays": h.who_pays,
+        "observable": h.observable,
+        "direction": h.direction.value,
+        "horizon": format_duration(h.horizon),
+        "session_window": list(h.session_window),
+        "regime_filter": h.regime_filter,
+        "kill_condition": {
+            "metric": k.metric,
+            "aggregation": k.aggregation,
+            "window_days": k.window_days,
+            "operator": k.operator,
+            "threshold": k.threshold,
+            "unit": k.unit,
+        },
+        "dsl_constraints": constraints_to_dict(h.dsl_constraints),
+    }
