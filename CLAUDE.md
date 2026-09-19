@@ -190,6 +190,7 @@ uv run python -m src.cli collect --ledger ... --day 2026-09-15 --hypothesis ... 
 | Os limiares, hasheados | `gate-prereg.md` |
 | A hipótese do teste de fumaça | `exemplos/h001.yaml` |
 | O que fazer antes da primeira linha de código | `dia-zero-checklist.md` |
+| O que já foi entregue e o que está pendente | `RESUMO-ENTREGA.md` |
 
 ## Glossário mínimo
 

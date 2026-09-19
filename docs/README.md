@@ -1,5 +1,10 @@
 # Documentação do projeto
 
+## Estado atual
+
+Ver **`RESUMO-ENTREGA.md`**: arquitetura, entregas por marco, decisões que
+mudaram as specs e pendências.
+
 ## Para quem vai implementar
 
 Leia nesta ordem:
