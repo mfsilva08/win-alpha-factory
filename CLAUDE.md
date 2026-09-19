@@ -40,7 +40,8 @@ src/
   agents/       hypothesis.py formula.py schemas.py client.py
   codegen/      transpiler.py parity.py telemetry.py guards.py templates/robo.mq5.j2
   ops/          coletor.py alerts.py
-  reports/      session.py monitor.py templates/
+  reports/      session.py monitor.py charts.py templates/
+  cli.py        genesis · verify · session · report · collect · monitor
   catalog/      families.py reward.py bandit.py metrics.py
 tests/
 docs/
@@ -166,9 +167,12 @@ uv run pytest                       # tudo
 uv run mypy --strict src tests      # tipagem
 uv run ruff check src tests         # lint
 uv run pytest tests/test_projection.py -v   # o teste mais importante do projeto
-uv run python -m src.cli session --hypothesis docs/exemplos/h001.yaml
-uv run python -m src.cli report --session <id>
-uv run python -m src.cli collect --day 2026-09-15     # o job diário
+uv run python -m src.cli genesis --ledger C:/dados/ledger.sqlite --data-hash <sha256>
+uv run python -m src.cli verify  --ledger C:/dados/ledger.sqlite
+uv run python -m src.cli session --ledger ... --hypothesis docs/exemplos/h001.yaml
+uv run python -m src.cli report  --ledger ... --session <id>
+uv run python -m src.cli collect --ledger ... --day 2026-09-15 --hypothesis ... \
+    --telemetry-dir ... --calendar ...                 # o job diário
 ```
 
 ## Onde está o quê

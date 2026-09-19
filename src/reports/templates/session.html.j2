@@ -1,0 +1,54 @@
+{% extends "_base.html.j2" %}
+{% block body %}
+<h1>Sessão {{ session_id }}</h1>
+<p class="muted">Relatório da fábrica de pesquisa · zona de verificação — contém métricas, não enviar a agentes.</p>
+
+<h2>Funil</h2>
+<div class="grid4">
+  <div class="card"><div class="v">{{ funnel.hypotheses }}</div><div class="k">hipóteses</div></div>
+  <div class="card"><div class="v">{{ funnel.formulas }}</div><div class="k">fórmulas emitidas</div></div>
+  <div class="card"><div class="v">{{ funnel.evaluations }}</div><div class="k">avaliações gastas (tentativas)</div></div>
+  <div class="card"><div class="v">{{ funnel.accepted }}</div><div class="k">aprovadas no gate</div></div>
+</div>
+
+<h2>Livro-razão</h2>
+<div class="scroll"><table>
+  <tr><th></th><th class="n">tentativas</th><th>head</th></tr>
+  <tr><td>antes</td><td class="n">{{ ledger.count_before }}</td><td><code>{{ ledger.head_before }}</code></td></tr>
+  <tr><td>depois</td><td class="n">{{ ledger.count_after }}</td><td><code>{{ ledger.head_after }}</code></td></tr>
+</table></div>
+<p>SR* exigido agora: <strong>{{ ledger.sr_star }}</strong> <span class="muted">{{ ledger.sr_star_note }}</span></p>
+<p class="muted">Guarde este HTML: o <code>head</code> impresso aqui ancora a cadeia fora do banco.</p>
+
+<h2>Tentativas</h2>
+{% if attempts %}
+<div class="scroll"><table>
+  <tr><th>tentativa</th><th>hipótese</th><th class="n">#</th><th>veredito</th><th>assinatura estrutural</th></tr>
+  {% for a in attempts %}
+  <tr><td><code>{{ a.trial_id }}</code></td><td>{{ a.hypothesis_id }}</td><td class="n">{{ a.attempt }}</td>
+      <td><span class="tag {{ a.verdict }}">{{ a.verdict }}</span></td><td><code>{{ a.sig }}</code></td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="muted">Nenhuma tentativa nesta sessão.</p>{% endif %}
+
+<h2>Distribuição dos caminhos do CPCV</h2>
+{% if paths %}
+  {% for p in paths %}
+  <h3><code>{{ p.trial_id }}</code></h3>
+  <p class="muted">PnL líquido por caminho (pontos) — {{ p.n }} caminhos · mediana {{ p.median }} · {{ p.negative }} negativos</p>
+  {{ p.pnl_svg | safe }}
+  <p class="muted">Sharpe por caminho</p>
+  {{ p.sharpe_svg | safe }}
+  {% endfor %}
+{% else %}
+<p class="muted">Sem métricas da sessão neste relatório (gerado só a partir do livro-razão, que não guarda métricas).</p>
+{% endif %}
+
+<h2>Bandit</h2>
+<div class="scroll"><table>
+  <tr><th>família</th><th class="n">UCB antes</th><th class="n">UCB depois</th></tr>
+  {% for b in bandit %}
+  <tr><td>{{ b.family }}</td><td class="n">{{ b.before }}</td><td class="n">{{ b.after }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

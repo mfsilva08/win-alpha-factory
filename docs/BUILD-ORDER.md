@@ -152,15 +152,17 @@ depois `router`, depois `budgets`, depois `graph`.
 **Spec:** `SPEC-fase-4-operacao.md` · `ADR-008` · `ADR-009`
 
 **Aceite:**
-- [ ] O robô grava uma linha por barra, inclusive em dias sem operação
-- [ ] `transpile` levanta `NonInstrumentableKillCondition` para métrica desconhecida
-- [ ] O coletor detecta CSV com contagem de barras diferente da esperada
-- [ ] `evaluate_kill` devolve `INSUFFICIENT` enquanto não há janela completa
-- [ ] O cruzamento do limiar grava `kind='kill'` no livro-razão
-- [ ] O coletor **não** desliga o robô: só marca e alerta
-- [ ] Os três alertas são tipos distintos e disparam por gatilhos distintos
-- [ ] Teste de paridade semanal roda sobre dados de produção
-- [ ] Relatório de sessão e de monitoramento abrem sem servidor, arquivo único
+- [x] O robô grava uma linha por barra, inclusive em dias sem operação (template
+      + robô simulado; confirmar no Strategy Tester)
+- [x] `transpile` levanta `NonInstrumentableKillCondition` para métrica desconhecida
+- [x] O coletor detecta CSV com contagem de barras diferente da esperada
+- [x] `evaluate_kill` devolve `INSUFFICIENT` enquanto não há janela completa
+- [x] O cruzamento do limiar grava `kind='kill'` no livro-razão
+- [x] O coletor **não** desliga o robô: só marca e alerta
+- [x] Os três alertas são tipos distintos e disparam por gatilhos distintos
+- [x] Teste de paridade semanal roda sobre dados de produção (`weekly_parity`;
+      testado com telemetria simulada)
+- [x] Relatório de sessão e de monitoramento abrem sem servidor, arquivo único
 
 ---
 

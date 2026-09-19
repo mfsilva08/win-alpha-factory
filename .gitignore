@@ -9,3 +9,4 @@ MQL5/Files/telemetry/
 .ruff_cache/
 *.sqlite-wal
 *.sqlite-shm
+relatorios/

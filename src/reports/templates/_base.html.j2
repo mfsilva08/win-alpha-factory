@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<style>
+:root { --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --card:#f9fafb;
+        --ok:#047857; --warn:#b45309; --bad:#b91c1c; --accent:#2563eb; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0b0f14; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --card:#111827;
+          --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --accent:#60a5fa; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+       font:14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 32px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+h3 { font-size: 15px; margin: 20px 0 6px; }
+.muted { color: var(--muted); }
+.grid4 { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.card .v { font-size: 22px; font-variant-numeric: tabular-nums; }
+.card .k { color: var(--muted); font-size: 12px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; font-size: 12px; color: var(--muted); }
+td.n, th.n { text-align: right; }
+code { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+.tag { display:inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
+.ALIVE, .ACCEPTED { color: var(--ok); } .INSUFFICIENT { color: var(--warn); }
+.DEAD, .FAILED_GATE { color: var(--bad); }
+.scroll { overflow-x: auto; }
+svg.chart { width: 100%; height: auto; display: block; }
+svg .grid { stroke: var(--line); } svg .tick { fill: var(--muted); font-size: 11px; }
+svg .threshold { stroke: var(--bad); stroke-dasharray: 4 3; }
+svg .band { fill: var(--accent); opacity: .15; } svg .dot { fill: var(--accent); opacity: .8; }
+.legend { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.legend .key::before { content:""; display:inline-block; width:10px; height:3px; margin-right:4px;
+                       vertical-align:middle; background: var(--c); }
+.legend .key { margin-right: 12px; }
+footer { margin-top: 40px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+{% block body %}{% endblock %}
+<footer>Gerado em {{ generated_at }} · arquivo único, sem servidor (ADR-008) · win-alpha-factory</footer>
+</main>
+</body>
+</html>

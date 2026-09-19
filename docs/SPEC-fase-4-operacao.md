@@ -148,6 +148,23 @@ esgotou.
 uma ação registrada, feita por uma pessoa. A razão é simples: um bug no coletor
 não pode derrubar uma estratégia viva.
 
+### Implementação (M8)
+
+- `collect(day, telemetry_dir, ledger, hipótese, strategy_id, bars_expected, costs)`.
+  `bars_expected` vem do calendário de pregão (`load_calendar`: CSV
+  `day,bars_expected`) ou é passado direto
+- O registro `kind='daily'` usa como `data_hash` o sha256 do próprio CSV do dia
+- A janela da `kill_condition` conta **dias com medição**; dia sem valor da
+  métrica não entra nem conta
+- Coletar o mesmo dia duas vezes levanta `AlreadyCollected`: duplicaria a série
+- `kind='kill'` é gravado uma vez por hipótese; os dias seguintes continuam
+  alertando `DECAIMENTO` até alguém desligar
+- Telemetria ausente ou fora do schema: alerta `OPERACIONAL`, nada gravado
+- Guard "esperado" é só `CUTOFF`; qualquer outro bloqueio (`MARGIN`, `GRID`,
+  `DAILY_LOSS`, `BREAKER`, `DATA_GAP`) é alerta `OPERACIONAL`
+- Há teste que confere que o coletor não altera nenhum arquivo de telemetria e
+  não contém chamada que feche posição, remova o EA ou apague arquivo
+
 ## 4.4 Os três alertas, e por que não podem ser confundidos
 
 | Alerta | Gatilho | O que fazer |
@@ -185,6 +202,10 @@ testado. É alerta de divergência, e é sério.
 ## 4.6 `reports/monitor.py`
 
 HTML estático, um arquivo, gerado pelo coletor. Ver `ADR-008-sem-frontend.md`.
+Gráficos em SVG inline (`reports/charts.py`), sem JS, CSS embutido com modo
+escuro. O intervalo do CPCV entra como `cpcv_band[h.id] = (q1, q3, n_dias)` do
+PnL total dos caminhos — o livro-razão não guarda métricas de backtest, então
+quem implanta informa a faixa (pendência ligada ao `var_sr`, SPEC-fase-2 §2.8).
 
 Conteúdo mínimo:
 

@@ -1,0 +1,37 @@
+{% extends "_base.html.j2" %}
+{% block body %}
+<h1>Monitoramento</h1>
+<p class="muted">Gerado pelo coletor · estado de cada hipótese viva · prejuízo não é gatilho de desligamento.</p>
+
+<h2>Estado</h2>
+<div class="scroll"><table>
+  <tr><th>hipótese</th><th>métrica</th><th>regra</th><th class="n">dias</th><th class="n">agregado</th><th>estado</th></tr>
+  {% for h in hypotheses %}
+  <tr><td>{{ h.id }}</td><td><code>{{ h.metric }}</code></td><td>{{ h.rule }}</td>
+      <td class="n">{{ h.days }}</td><td class="n">{{ h.value }}</td>
+      <td><span class="tag {{ h.state }}">{{ h.state }}</span></td></tr>
+  {% endfor %}
+</table></div>
+
+{% for h in hypotheses %}
+<h2>{{ h.id }}</h2>
+<h3>{{ h.metric }} ({{ h.aggregation }} móvel de {{ h.window }} dias) contra o limiar</h3>
+{{ h.kill_svg | safe }}
+<h3>PnL acumulado contra o intervalo interquartil do CPCV</h3>
+{{ h.pnl_svg | safe }}
+{% if not h.has_band %}<p class="muted">Intervalo do CPCV indisponível para esta hipótese.</p>{% endif %}
+<h3>Slippage realizado × modelado, por semana</h3>
+<div class="scroll"><table>
+  <tr><th>semana</th><th class="n">operações</th><th class="n">slippage médio (ticks)</th><th class="n">modelado</th></tr>
+  {% for w in h.weeks %}
+  <tr><td>{{ w.week }}</td><td class="n">{{ w.trades }}</td><td class="n">{{ w.slippage }}</td><td class="n">{{ modeled_slippage }}</td></tr>
+  {% endfor %}
+</table></div>
+<h3>Rejeições e bloqueios de guard</h3>
+<div class="scroll"><table>
+  <tr><th>tipo</th><th class="n">total</th></tr>
+  <tr><td>rejeições</td><td class="n">{{ h.rejections }}</td></tr>
+  {% for k, v in h.guards.items() %}<tr><td>{{ k }}</td><td class="n">{{ v }}</td></tr>{% endfor %}
+</table></div>
+{% endfor %}
+{% endblock %}
