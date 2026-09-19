@@ -293,6 +293,13 @@ class Ledger:
             expected_seq += 1
         return True
 
+    def has_trial(self, trial_id: str) -> bool:
+        r = self._conn.execute(
+            "SELECT 1 FROM ledger WHERE trial_id = ? AND kind IN ('backtest', 'holdout') LIMIT 1",
+            (trial_id,),
+        ).fetchone()
+        return r is not None
+
     def seen_structural(self, sig: str) -> bool:
         r = self._conn.execute(
             "SELECT 1 FROM ledger WHERE structural_sig = ? LIMIT 1", (sig,)

@@ -5,6 +5,62 @@ escritas à mão podem ser testadas com rigor superior ao de boa parte das mesas
 
 ---
 
+## 2.0 O motor de backtest é externo
+
+**Decisão (19/09/2026):** a execução do backtest fica numa API externa, chamada com
+o id do teste, que devolve o resultado. A fábrica não simula execução; ela define
+o que pede, valida o que recebe e sela o resultado no livro-razão.
+
+```
+formula agent ─► runner.run() ──► BacktestEngine.evaluate(req) ──► API externa
+                     │                     (porta)        (api_engine.py)
+                     │ finally
+                     ▼
+               ledger.append()  ──► SealedResult(metrics) ──► gate (M4)
+```
+
+| Módulo | Dono | Papel |
+|---|---|---|
+| `backtest/engine.py` | fábrica | porta: `BacktestRequest`, `TradeRules`, `CvConfig`, protocolo `BacktestEngine` |
+| `backtest/api_engine.py` | fábrica | adaptador da API. **Recusa na construção até o contrato existir** |
+| `backtest/metrics.py` | fábrica | `FoldMetrics`, `BacktestOutcome` e `validate_outcome` — o contrato de resposta |
+| `backtest/runner.py` | fábrica | o selo: write-ahead e devolução |
+| `backtest/costs.py` | fábrica | `CostModel` lido de `config/costs.yaml`, enviado em cada requisição |
+| folds, simulação, dados (§2.2–2.4) | **API** | CPCV, preenchimento pessimista, série contínua. As regras destas seções viram **contrato** que a API precisa cumprir |
+
+O `test_id` enviado é o `trial_id` do livro-razão, único por construção (índice
+único no schema; `run` recusa id repetido **antes** de chamar a API).
+
+### O que a resposta da API precisa trazer
+
+Qualquer resposta fora disto vira tentativa `crashed` (`InvalidOutcome`):
+
+- o mesmo `test_id` enviado
+- o `data_hash` do dataset que de fato usou, igual ao do gênesis
+- exatamente `C(n_groups, k_test)` partições, `path_id` de `0` a `n-1`
+- por partição, os campos de `FoldMetrics` (§2.5), todos finitos, com
+  `bruto − custo = líquido`, `hit_rate` em `[0, 1]`, pregões ativos e ordens
+  rejeitadas
+
+### Perguntas abertas sobre a API
+
+Listadas também na docstring de `api_engine.py`. Precisam de resposta antes do
+M3 ser declarado concluído:
+
+1. A fórmula é enviada pela fábrica (S-expression) ou o teste já existe lá?
+2. Síncrona ou com consulta de status?
+3. Métricas por partição, com skew, curtose e pregões ativos?
+4. A resposta informa o hash do dataset usado?
+5. Aceita custos e regras de execução por requisição?
+6. **Aceita dados sintéticos?** O teste de calibração do gate (§2.12) — o mais
+   importante do projeto — roda 1.000 estratégias sobre ruído. Se a API não
+   aceitar, é preciso um motor local só para a calibração, e provar que ele e a
+   API concordam
+7. Mantém a lista de ids executados? Permite conferir que nenhuma execução ficou
+   fora do livro-razão (o `finally` não cobre queda de energia entre a resposta
+   e o `append`)
+8. Quantas partições devolve: 28 ou 7? Ver a nota em §2.3
+
 ## 2.1 `backtest/costs.py`
 
 ```python
@@ -54,6 +110,14 @@ Regras:
 1. Os grupos são contíguos no tempo e quebram **sempre no fechamento do pregão**.
    Nenhum grupo atravessa o overnight
 2. Combinações: `C(n_groups, k_test)`. Com N=8, k=2 são 28 caminhos
+
+   > **Nota de terminologia, a resolver no M4.** Em López de Prado, `C(8,2) = 28`
+   > é o número de **partições** treino/teste; o número de **caminhos** de
+   > backtest completos é `φ = C(N,k)·k/N = 7`. O projeto chama as 28 partições
+   > de "caminhos" (prereg, `min_trades_per_path`, relatório). O código usa
+   > `CvConfig.n_splits() = 28` e espera 28 `FoldMetrics`. Antes do gate, é
+   > preciso decidir se `min_trades_per_path`, `sign_flip_frac` e o PBO são
+   > calculados sobre as 28 partições ou sobre os 7 caminhos.
 3. **Purga:** remove do treino toda amostra cujo rótulo se sobrepõe ao período de
    teste. Janela = `label_horizon`
 4. **Embargo:** remove do treino `embargo_mult × label_horizon` após a fronteira
@@ -131,15 +195,26 @@ def run(ast: Node, frame: MarketFrame, cfg: BacktestConfig,
 Ordem obrigatória, e não pode ser alterada:
 
 ```python
+check_arg_kinds(ast); infer_unit(ast)          # AST malformada: não é tentativa
+if ledger.has_trial(trial_id): raise DuplicateTrial
 try:
-    metrics = _evaluate(ast, frame, cfg)
-    crashed = False
-except Exception:
-    metrics, crashed = None, True
+    outcome = engine.evaluate(req)             # a API
+    validate_outcome(outcome, ...)
+    metrics = outcome.folds
+except Exception as e:
+    failure = e
 finally:
-    ledger.append(LedgerRecord(kind="backtest", crashed=crashed, ...))   # PRIMEIRO
-return SealedResult(metrics)                                             # DEPOIS
+    ledger.append(LedgerRecord(kind="backtest", crashed=metrics is None, ...))  # PRIMEIRO
+if metrics is None:
+    raise BacktestCrashed(trial_id) from failure                                # DEPOIS
+return SealedResult(metrics)
 ```
+
+**Diferença deliberada em relação ao esboço original:** a falha **levanta**
+`BacktestCrashed` depois de gravar, em vez de devolver `SealedResult(None)`. Com o
+motor numa API, uma queda de rede num laço queimaria tentativas em silêncio; a
+exceção para a sessão. A tentativa já está contada — bugs também consomem
+tentativas.
 
 Se o processo morrer entre avaliar e gravar, a tentativa se perde e o contador fica
 menor que a verdade — inflando o limiar do gate na direção errada.

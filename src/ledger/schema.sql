@@ -23,6 +23,9 @@ CREATE INDEX IF NOT EXISTS idx_struct ON ledger(structural_sig);
 CREATE INDEX IF NOT EXISTS idx_hyp    ON ledger(hypothesis_id);
 CREATE INDEX IF NOT EXISTS idx_kind   ON ledger(kind);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_one_genesis ON ledger(kind) WHERE kind = 'genesis';
+-- o trial_id é o id com que a API de backtest é chamada: não pode repetir
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trial_unique ON ledger(trial_id)
+  WHERE kind IN ('backtest', 'holdout');
 
 CREATE TRIGGER IF NOT EXISTS ledger_append_only_update
 BEFORE UPDATE ON ledger

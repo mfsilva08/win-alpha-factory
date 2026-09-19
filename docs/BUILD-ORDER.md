@@ -58,15 +58,25 @@ Ordem interna: `ops` → `ast` → `parser` → `canonical` → `eval_vectorized
 
 ## M3 — Motor de backtest
 
-**Spec:** `SPEC-fase-2-validacao.md` seções 2.1 a 2.6
+**Spec:** `SPEC-fase-2-validacao.md` seções 2.0 a 2.6
 
-**Aceite:**
+O backtest roda numa **API externa** (§2.0). Do lado da fábrica:
+
+- [x] Porta `BacktestEngine`, requisição e contrato de resposta definidos
+- [x] `run()` grava no livro-razão mesmo quando a avaliação lança exceção
+- [x] Resposta fora do contrato (partições, NaN, dataset, id) vira `crashed`
+- [x] `trial_id` repetido recusado antes de chamar o motor
+- [x] `CostModel` lido de `config/costs.yaml` e enviado na requisição
+- [ ] Adaptador `api_engine.py` implementado — **aguarda o contrato da API**
+
+Do lado da API — viram **testes de contrato**, rodados contra ela quando o
+adaptador existir:
+
 - [ ] Nenhum fold atravessa o fechamento do pregão
 - [ ] Teste de vazamento sintético: rótulo com lookahead deliberado é detectado
 - [ ] Modelo de custo reproduz nota real dentro de um centavo
 - [ ] Ordem limitada não preenche ao tocar, só ao atravessar
 - [ ] Ordem após cutoff é rejeitada e registrada
-- [ ] `run()` grava no livro-razão mesmo quando a avaliação lança exceção
 
 ---
 

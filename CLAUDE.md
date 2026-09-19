@@ -33,7 +33,8 @@ src/
   dsl/          ast.py parser.py canonical.py eval_vectorized.py eval_incremental.py ops.py
                 errors.py verdict.py market.py
   ledger/       schema.sql ledger.py
-  backtest/     folds.py execution.py metrics.py costs.py data.py
+  backtest/     engine.py api_engine.py runner.py metrics.py costs.py errors.py
+                (folds, execução e dados rodam na API externa — SPEC-fase-2 §2.0)
   gate/         dsr.py pbo.py robustness.py collapse.py config.py
   orchestrator/ state.py projection.py router.py graph.py budgets.py events.py
   agents/       hypothesis.py formula.py schemas.py client.py
