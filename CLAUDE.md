@@ -161,6 +161,7 @@ Esta lista existe porque cada item parece uma melhoria óbvia e destrói o siste
 ## Como rodar
 
 ```bash
+uv sync --extra dev --extra agents  # ambiente (langgraph entra nos testes do M5)
 uv run pytest                       # tudo
 uv run mypy --strict src tests      # tipagem
 uv run ruff check src tests         # lint

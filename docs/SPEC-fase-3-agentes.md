@@ -82,23 +82,47 @@ objeto de estado.
 
 Escreva este teste antes de escrever `project()`.
 
+### Implementação — três camadas, cada uma suficiente sozinha
+
+1. **Estrutura:** `ResearchView` não tem campo de métricas (há teste que confere
+   a lista exata de campos)
+2. **Serialização:** `serialize_for_api` aceita só `ResearchView` (`TypeError`
+   para qualquer outra coisa) e escreve JSON determinístico com lista fechada de
+   campos. `TrialState` nunca é serializado
+3. **Varredura:** `assert_no_metrics(payload, metrics)` procura no payload final
+   os nomes de métrica e os **números** das métricas privadas da tentativa
+   (decimais em várias formatações; inteiros só a partir de 1.000, para não
+   colidir com janelas e horários). Levanta `AssertionError` explicitamente —
+   `assert` sumiria com `python -O`
+
+`research_payload(st)` é o único caminho de `TrialState` até a API de pesquisa:
+projeta, serializa e varre.
+
 ## 3.3 `orchestrator/router.py` — funções puras
 
 ```python
-def route_formula(st: TrialState) -> Literal["proof","retry","abandon"]:
-    if st.verdict is Verdict.INVALID_AST:                       return "retry"
-    if st.verdict in (Verdict.TOO_COMPLEX, Verdict.REDUNDANT):  return "retry"
-    if st.attempt >= st.budget.max_attempts:                    return "abandon"
-    return "proof"
+def route_formula(st) -> Literal["proof","retry","abandon"]:
+    if st.verdict in (INVALID_AST, TOO_COMPLEX, REDUNDANT):
+        return "abandon" if st.attempt >= st.budget.max_attempts else "retry"
+    return "proof"                      # fórmula válida segue, mesmo na última tentativa
 
-def route_proof(st: TrialState) -> Literal["backtest","retry"]:
-    return "retry" if st.proof_status is ProofStatus.FAILED else "backtest"
+def route_proof(st) -> Literal["backtest","retry","abandon"]:
+    if st.proof_status is ProofStatus.FAILED:
+        return "abandon" if st.attempt >= st.budget.max_attempts else "retry"
+    return "backtest"                   # PASSED ou SKIPPED
 
-def route_gate(st: TrialState) -> Literal["codegen","retry","abandon"]:
+def route_gate(st) -> Literal["codegen","retry","abandon"]:
     if st.verdict is Verdict.ACCEPTED:     return "codegen"
     if st.verdict is Verdict.FAILED_GATE:  return "abandon"
-    return "retry"
+    return "abandon" if st.attempt >= st.budget.max_attempts else "retry"
 ```
+
+**Correção em relação ao esboço:** toda rota de `retry` confere o orçamento. No
+esboço, `INVALID_AST`/`TOO_COMPLEX`/`REDUNDANT` devolviam `retry` antes de olhar
+`attempt`, e `route_proof` nunca olhava — fórmula válida seguida de prova falha
+repetia para sempre. Qualquer veredito ou estado fora do previsto levanta
+`RoutingError`: é bug, não caso de negócio. `ProofStatus.SKIPPED` cobre a
+verificação formal fora do escopo (ADR-006).
 
 `FAILED_GATE` encerra a hipótese, não gera retry. Não "melhore" isso.
 
@@ -131,7 +155,7 @@ g.add_edge("backtest", "gate")
 g.add_conditional_edges("formula", route_formula,
     {"proof": "proof", "retry": "formula", "abandon": END})
 g.add_conditional_edges("proof", route_proof,
-    {"backtest": "backtest", "retry": "formula"})
+    {"backtest": "backtest", "retry": "formula", "abandon": END})
 g.add_conditional_edges("gate", route_gate,
     {"codegen": "codegen", "retry": "formula", "abandon": END})
 app = g.compile()
@@ -139,6 +163,17 @@ app = g.compile()
 
 Cada nó registra um `Event` com semente aleatória, hash do payload enviado e hash da
 resposta. Isso é o que permite replay determinístico.
+
+Implementação: os nós são injetados (`Nodes`), e o grafo só conhece a topologia.
+Toda chamada a modelo passa por `graph.call_agent`, que monta o payload por
+`research_payload`, deriva a semente de `(trial_id, nó, tentativa)` e grava o
+`Event` com a resposta. O log vai para JSONL (nunca sobrescrito). Em replay, o
+`ReplayClient` serve as respostas gravadas e levanta `ReplayDiverged` se o payload
+montado agora diferir do gravado — há teste com um modelo não determinístico de
+propósito. `recursion_limit = 4 × max_attempts + 8`.
+
+`Hypothesis`, `KillSpec` e `Direction` já existem em `agents/schemas.py`, com a
+leitura do YAML (`load_hypothesis`), porque o estado precisa deles no M5.
 
 ---
 

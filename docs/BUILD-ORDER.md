@@ -111,10 +111,10 @@ Ordem interna: **`test_pesquisa_nunca_ve_metricas` primeiro**, depois `projectio
 depois `router`, depois `budgets`, depois `graph`.
 
 **Aceite:**
-- [ ] O teste de projeção passa, incluindo a checagem de string no payload final
-- [ ] `route_gate` devolve `abandon` em `FAILED_GATE`, nunca `retry`
-- [ ] Replay a partir do log de eventos reproduz a mesma AST
-- [ ] `BudgetExhausted` dispara ao atingir o teto global
+- [x] O teste de projeção passa, incluindo a checagem de string no payload final
+- [x] `route_gate` devolve `abandon` em `FAILED_GATE`, nunca `retry`
+- [x] Replay a partir do log de eventos reproduz a mesma AST
+- [x] `BudgetExhausted` dispara ao atingir o teto global
 
 ---
 
