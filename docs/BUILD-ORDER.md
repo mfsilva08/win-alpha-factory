@@ -177,6 +177,20 @@ Corte sem dó se o fôlego acabar. Ordem:
 
 Se o passo 3 nunca chegar, tudo bem. Pular 1 e 2 não.
 
+**Estado (19/09/2026):** os enunciados dos passos 1 e 2 estão verificados por teste
+de propriedade (`tests/test_guards.py`, milhares de entradas geradas com
+`hypothesis`), não por prova:
+
+- [x] Nenhuma ordem de abertura após o cutoff ou fora da sessão (propriedade)
+- [x] Nenhuma ordem acima da margem disponível (propriedade)
+- [x] Todo preço na grade, arredondado contra nós, a menos de um tick (propriedade)
+- [x] Causalidade do motor: o sinal em t não muda ao remover as barras após t
+      (200 ASTs aleatórias)
+- [x] Idempotência da canonicalização (10.000 ASTs, M1)
+- [x] O template MQL5 aplica os guards na mesma ordem de `codegen/guards.py`
+- [ ] Provas em Lean dos três enunciados de risco — pendente
+- [ ] Agente automatizado de prova (`VEC_EQ_INC`) — opcional
+
 ---
 
 ## Sequência do primeiro uso real
