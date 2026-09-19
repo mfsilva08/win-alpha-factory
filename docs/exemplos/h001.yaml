@@ -1,0 +1,59 @@
+# h001.yaml — hipótese escrita à mão para o teste de fumaça
+#
+# Serve para rodar o pipeline de ponta a ponta antes de existir qualquer agente.
+# Se esta hipótese atravessa DSL, prova, backtest e gate sem erro, o sistema
+# funciona. Se não atravessa, nenhum agente vai consertar.
+
+id:      h001
+family:  INTERMERCADO_SP500
+
+claim: >
+  Após deslocamento abrupto do S&P futuro, o mini índice reprecifica
+  com atraso de 1 a 3 minutos.
+
+who_pays: >
+  Market makers do WIN, que alargam o spread diante da incerteza e não
+  repassam o movimento imediatamente.
+
+observable: >
+  Z-score do retorno de 2 minutos do ES menos o z-score do retorno de
+  2 minutos do WIN, ambos normalizados na mesma janela.
+
+direction: LONG_ON_HIGH
+horizon:   PT3M                    # ISO 8601 · 3 minutos
+
+session_window:
+  start: "10:30"
+  end:   "16:30"
+
+regime_filter: null
+
+kill_condition:
+  metric:      lag_ms              # precisa estar em INSTRUMENTABLE_METRICS
+  aggregation: mediana
+  window_days: 90
+  operator:    "<"
+  threshold:   20000.0             # 20 s em milissegundos
+  unit:        ms
+
+dsl_constraints:
+  allowed_ops:   [ZSCORE, RET, LAG, ROLLING_STD, SUB, MUL, IN_WINDOW, REF]
+  forbidden_ops: [RANK_TS]
+  max_window:    120
+  max_depth:     4
+  max_nodes:     12
+  max_free_params: 3
+  required_refs: [ES]
+  session_mask:  ["10:30", "16:30"]
+
+# A fórmula escrita à mão para esta hipótese, em notação do DSL:
+#
+#   mul(
+#     in_window("10:30", "16:30"),
+#     sub(
+#       zscore(ret(ref("ES"), 2), 55),
+#       zscore(ret(close(), 2), 55)
+#     )
+#   )
+#
+# profundidade 4 · 2 janelas livres · saída Z · usa ref("ES")

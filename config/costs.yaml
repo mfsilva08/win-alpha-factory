@@ -1,0 +1,21 @@
+# costs.yaml — modelo de custo. Copiar para config/costs.yaml e preencher.
+#
+# Validação obrigatória antes da primeira sessão: reproduzir uma nota de
+# corretagem real com estes valores, dentro de um centavo. Ver dia-zero §Bloco 2.
+#
+# Valores de referência consultados em setembro de 2026. Taxas mudam.
+
+point_value:          0.20     # R$ por ponto do WIN
+tick_size:            5        # pontos
+slippage_ticks:       1        # por perna, pessimista por decisão
+exchange_fee:         0.25     # taxas B3 por contrato por lado — CONFERIR
+brokerage:            0.00     # mini contratos isentos na corretora — CONFERIR
+margin_per_contract:  155.00   # margem intradiária — CONFERIR
+
+# Derivados, calculados pelo CostModel — não preencher:
+#   round_trip_points = 2 * slippage_ticks * tick_size        = 10 pts
+#   fees_brl(2)       = (exchange_fee + brokerage) * 2 * 2    = R$ 1,00
+
+# Recalibração: o coletor mede slippage_ticks_avg realizado.
+# Divergência acima de 30% do modelado dispara alerta de DIVERGÊNCIA
+# e este arquivo deve ser atualizado. Ver SPEC-fase-4 §4.4.

@@ -1,0 +1,345 @@
+# Fase 3 — Orquestrador e agentes
+
+Primeira fase com chamadas de LLM. A ordem interna importa: o projetor de visão e o
+teste dele vêm **antes** de qualquer agente existir.
+
+---
+
+## 3.1 `orchestrator/state.py`
+
+```python
+class Verdict(StrEnum):
+    ACCEPTED = "ACCEPTED"
+    INVALID_AST = "INVALID_AST"
+    TOO_COMPLEX = "TOO_COMPLEX"
+    REDUNDANT = "REDUNDANT"
+    PROOF_FAILED = "PROOF_FAILED"
+    INSUFFICIENT_SAMPLE = "INSUFFICIENT_SAMPLE"
+    UNSTABLE_ACROSS_FOLDS = "UNSTABLE_ACROSS_FOLDS"
+    COST_DOMINATED = "COST_DOMINATED"
+    FAILED_GATE = "FAILED_GATE"
+
+@dataclass
+class TrialState:
+    trial_id:     str
+    parent_id:    str | None
+    hypothesis:   Hypothesis
+    formula_ast:  Node | None
+    proof_status: ProofStatus
+    verdict:      Verdict | None
+    metrics:      Metrics | None     # PRIVADO — jamais projetado à pesquisa
+    attempt:      int
+    budget:       Budget
+    detail:       str | None         # só para INVALID_AST e PROOF_FAILED
+    events:       list[Event]
+
+class Zone(StrEnum):
+    RESEARCH = "research"
+    VERIFICATION = "verification"
+```
+
+## 3.2 `orchestrator/projection.py` — o componente de maior risco
+
+```python
+@dataclass(frozen=True)
+class ResearchView:
+    hypothesis:   Hypothesis
+    formula_ast:  Node | None
+    verdict:      Verdict | None
+    detail:       str | None
+    attempt:      int
+    blocked_sigs: frozenset[str]
+    constraints:  Constraints
+    # NÃO existe campo de métricas nesta classe
+
+@dataclass(frozen=True)
+class VerificationView:
+    formula_ast: Node
+    metrics:     Metrics | None
+    n_trials:    int
+    cfg:         GateConfig
+
+def project(st: TrialState, z: Zone) -> ResearchView | VerificationView
+```
+
+`detail` só é preenchido quando `verdict ∈ {INVALID_AST, PROOF_FAILED}`. Em qualquer
+outro caso vale `None`.
+
+### O primeiro teste do projeto
+
+```python
+def test_pesquisa_nunca_ve_metricas():
+    st = TrialState(metrics=Metrics(sharpe=2.3141, net_points=88128.0, ...), ...)
+    payload = serialize_for_api(project(st, Zone.RESEARCH))
+    assert "sharpe" not in payload
+    assert "2.3141" not in payload
+    assert "88128" not in payload
+```
+
+O segundo e o terceiro `assert` pegam o caso difícil: métrica vazando embutida em
+texto livre. O teste roda sobre o **payload final enviado à API**, não sobre o
+objeto de estado.
+
+Escreva este teste antes de escrever `project()`.
+
+## 3.3 `orchestrator/router.py` — funções puras
+
+```python
+def route_formula(st: TrialState) -> Literal["proof","retry","abandon"]:
+    if st.verdict is Verdict.INVALID_AST:                       return "retry"
+    if st.verdict in (Verdict.TOO_COMPLEX, Verdict.REDUNDANT):  return "retry"
+    if st.attempt >= st.budget.max_attempts:                    return "abandon"
+    return "proof"
+
+def route_proof(st: TrialState) -> Literal["backtest","retry"]:
+    return "retry" if st.proof_status is ProofStatus.FAILED else "backtest"
+
+def route_gate(st: TrialState) -> Literal["codegen","retry","abandon"]:
+    if st.verdict is Verdict.ACCEPTED:     return "codegen"
+    if st.verdict is Verdict.FAILED_GATE:  return "abandon"
+    return "retry"
+```
+
+`FAILED_GATE` encerra a hipótese, não gera retry. Não "melhore" isso.
+
+## 3.4 `orchestrator/budgets.py`
+
+```python
+@dataclass(frozen=True)
+class Budget:
+    max_attempts: int = 10          # refinamentos da mesma fórmula
+    max_formulas_per_hypothesis: int = 25
+    max_trials_global: int = 3_000  # bate com gate-prereg.md
+    max_proof_iterations: int = 15
+
+def check(ledger: Ledger, b: Budget) -> None:
+    """Levanta BudgetExhausted se o teto global foi atingido."""
+```
+
+Retries por `INVALID_AST` e `PROOF_FAILED` não consomem tentativa global, mas
+consomem `max_attempts`.
+
+## 3.5 `orchestrator/graph.py`
+
+```python
+g = StateGraph(TrialState)
+for name, fn in NODES.items():
+    g.add_node(name, fn)
+g.set_entry_point("hypothesis")
+g.add_edge("hypothesis", "formula")
+g.add_edge("backtest", "gate")
+g.add_conditional_edges("formula", route_formula,
+    {"proof": "proof", "retry": "formula", "abandon": END})
+g.add_conditional_edges("proof", route_proof,
+    {"backtest": "backtest", "retry": "formula"})
+g.add_conditional_edges("gate", route_gate,
+    {"codegen": "codegen", "retry": "formula", "abandon": END})
+app = g.compile()
+```
+
+Cada nó registra um `Event` com semente aleatória, hash do payload enviado e hash da
+resposta. Isso é o que permite replay determinístico.
+
+---
+
+## 3.6 `catalog/families.py`
+
+```python
+@dataclass(frozen=True)
+class Family:
+    name:          str
+    mechanism:     str
+    typical_payer: str
+    data_needed:   frozenset[str]
+    horizon_range: tuple[int, int]      # minutos
+    allowed_ops:   frozenset[Op]
+    forbidden_ops: frozenset[Op]
+    session_hint:  tuple[str, str] | None
+    available:     bool = True          # False quando falta o dado
+```
+
+Escrito à mão. O sistema nunca cria uma família. Comece com três; as oito completas,
+com os conjuntos de operadores já definidos, estão em `catalogo-completo.md`.
+
+## 3.7 `catalog/reward.py` e `bandit.py`
+
+```python
+REWARD: dict[Verdict, float] = {
+    Verdict.INVALID_AST:           0.0,
+    Verdict.REDUNDANT:             0.0,
+    Verdict.TOO_COMPLEX:           0.1,
+    Verdict.PROOF_FAILED:          0.3,
+    Verdict.INSUFFICIENT_SAMPLE:   0.4,
+    Verdict.COST_DOMINATED:        0.5,
+    Verdict.UNSTABLE_ACROSS_FOLDS: 0.6,
+    Verdict.FAILED_GATE:           0.8,
+    Verdict.ACCEPTED:              1.0,
+}
+
+C_EXPLORE = 0.8
+
+def ucb(mean_reward: float, pulls: int, total: int) -> float:
+    return mean_reward + C_EXPLORE * math.sqrt(math.log(total) / pulls)
+
+def pick(families: list[Family], ledger: Ledger) -> Family:
+    """Maior UCB entre as disponíveis. Família nunca escolhida tem prioridade."""
+```
+
+`FAILED_GATE` valer 0,8 não é erro. A recompensa mede produtividade do processo, não
+lucro — é a única medida que pode atravessar o firewall sem contaminá-lo. Chegar ao
+gate significa que a família produziu hipóteses falseáveis, fórmulas bem-tipadas,
+originais e economicamente viáveis.
+
+**Nunca use Sharpe nem PnL como recompensa.** Isso derruba o firewall por dentro: a
+escolha da família passaria a carregar informação de desempenho.
+
+---
+
+## 3.8 `agents/schemas.py` — a jaula da saída
+
+O modelo emite via tool use com schema restrito, montado **por tentativa** a partir
+das `Constraints`. O campo `op` é um `enum` contendo apenas os operadores permitidos
+naquela hipótese. Emitir algo fora vira erro de schema antes de sair do modelo.
+
+```python
+@dataclass(frozen=True)
+class KillSpec:
+    metric:      str      # coluna que o robô sabe gravar
+    aggregation: Literal["mediana","media"]
+    window_days: int
+    operator:    Literal["<",">"]
+    threshold:   float
+    unit:        str
+
+@dataclass(frozen=True)
+class Hypothesis:
+    id:              str
+    family:          str
+    claim:           str
+    who_pays:        str
+    observable:      str
+    direction:       Direction
+    horizon:         timedelta
+    session_window:  tuple[str, str]
+    regime_filter:   str | None
+    kill_condition:  KillSpec
+    dsl_constraints: Constraints
+```
+
+`kill_condition` é objeto tipado, nunca prosa. O agente de execução levanta
+`NonInstrumentableKillCondition` se `metric` não estiver em
+`INSTRUMENTABLE_METRICS`. A lista está em SPEC-fase-4 §4.2, e o agente de
+hipótese a recebe no prompt.
+
+## 3.9 `agents/hypothesis.py`
+
+Entrada: família escolhida pelo bandit, teses já exploradas na família, dados
+disponíveis, exigências.
+
+O prompt **não contém**: nenhum Sharpe, nenhuma métrica, nenhuma menção a qual
+família funciona melhor, nenhum exemplo de hipótese aprovada, nenhuma instrução para
+"ser criativo".
+
+Validações determinísticas após a emissão, nesta ordem:
+
+1. `who_pays` não vazio e não circular (rejeita se contiver apenas "o mercado",
+   "os traders", "reversão", "tendência" e variações)
+2. `observable` computável com `data_needed` da família
+3. `kill_condition.metric` em `INSTRUMENTABLE_METRICS` — ver SPEC-fase-4 §4.2
+4. `horizon` dentro de `family.horizon_range`
+5. assinatura semântica não duplicada: chave composta
+   `(family, observable, direction, horizon_bucket)`
+
+Falha em qualquer uma → nova tentativa, sem consumir tentativa global.
+
+## 3.10 `agents/formula.py`
+
+Entrada: `ResearchView`. Nada além dela.
+
+Saída: AST validada + assinatura exata + assinatura estrutural.
+
+Efeito do veredito recebido na tentativa anterior:
+
+| Veredito | Efeito na próxima tentativa |
+|---|---|
+| `INVALID_AST` | erro de schema completo volta; retry; não conta tentativa |
+| `TOO_COMPLEX` | `max_depth` cai em 1 |
+| `REDUNDANT` | assinatura entra em `blocked_sigs`; operador raiz banido |
+| `UNSTABLE_ACROSS_FOLDS` | `max_window` cortado pela metade |
+| `COST_DOMINATED` | `min_horizon` sobe um bucket |
+| `PROOF_FAILED` | goal state completo volta; retry |
+| `FAILED_GATE` | hipótese encerrada; não há próxima tentativa |
+
+## 3.11 `agents/client.py`
+
+- Uma chamada por nó, por iteração. Nunca duas
+- Timeout e retry por erro de rede contam como a mesma chamada
+- Todo payload enviado passa por `assert_no_metrics(payload)` antes do envio.
+  Falha ali é `AssertionError`, não warning
+
+---
+
+## 3.12 `codegen/` — o transpilador
+
+```python
+def transpile(ast: Node, h: Hypothesis, rules: TradeRules, costs: CostModel) -> str
+```
+
+Determinístico, sem LLM. Emite `.mq5` a partir do template Jinja com:
+
+- estado incremental derivado da AST (mesma lógica de `eval_incremental`)
+- guards obrigatórios: `cutoff`, margem (`lots ≤ equity / margin_per_contract`),
+  grade de 5 pontos com pós-condição, limite de perda diária, circuit breaker por
+  rejeições em série
+- `OnTick` sai na primeira linha quando a barra não fechou
+- `g_state.Update(iClose(_Symbol, TF, 1))` — **índice 1, nunca 0**
+- `LogDecision` grava por barra, tenha havido ordem ou não, incluindo
+  `kill_condition.metric`
+
+```python
+def parity_check(ast: Node, mq5_log: Path, frame: MarketFrame) -> ParityResult
+```
+
+Roda a AST vetorizada sobre as mesmas barras que o EA logou e exige
+`max(|A − B|) < 1e-9`. Período de teste deve incluir virada de dia e rolagem.
+
+O pacote de implantação carrega: `.mq5`, hash da AST, hash do config do gate,
+certificado de prova (se houver) e o resultado da paridade.
+
+---
+
+## 3.13 `reports/` — o que substitui o front
+
+Ver `ADR-008`. Não existe frontend. A parte de monitoramento diário está em
+`SPEC-fase-4-operacao.md` §4.6.
+
+```python
+def session_report(session_id: str, ledger: Ledger, out: Path) -> Path
+def monitor_report(telemetry: Path, ledger: Ledger, out: Path) -> Path
+```
+
+HTML estático, arquivo único, sem servidor e sem build. Conteúdo do relatório de
+sessão:
+
+- funil: hipóteses geradas, fórmulas emitidas, avaliações gastas, aprovadas
+- tabela de tentativas com veredito e assinatura estrutural
+- contador do livro-razão antes e depois, e o `SR*` resultante
+- para cada fórmula que chegou ao backtest: distribuição dos 28 caminhos
+- scores do bandit antes e depois
+
+Relatório de monitoramento: série da `kill_condition` contra o limiar, slippage
+realizado contra o modelado, PnL acumulado contra o intervalo do CPCV.
+
+---
+
+## Critérios de aceite da Fase 3
+
+1. `test_pesquisa_nunca_ve_metricas` passa, incluindo a checagem de string no payload
+2. Auditoria manual de 50 payloads: nenhum contém número derivado de backtest
+3. Replay determinístico: reexecutar uma tentativa a partir do log de eventos
+   produz a mesma AST
+4. `count()` cresce exatamente uma unidade por avaliação, e zero em retries de
+   `INVALID_AST`
+5. Paridade abaixo de 1e-9 em período com virada de dia e rolagem
+6. Guards rejeitam: ordem após cutoff, preço fora da grade, tamanho acima da margem
+7. `transpile` recusa AST cuja `kill_condition.metric` não é instrumentável
