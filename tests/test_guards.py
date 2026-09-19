@@ -18,6 +18,7 @@ Invariantes do motor:
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -110,7 +111,7 @@ def test_posicao_nunca_atravessa_o_cutoff(lim: GuardLimits, tod: int, held: int,
 def test_decisao_so_abre_zerado_e_nunca_com_nan(sig: float | None, th: float, direction: int,
                                                 pos: int) -> None:
     d = decide(sig, th, direction, pos)
-    if pos != 0 or sig is None or sig != sig:
+    if pos != 0 or sig is None or math.isnan(sig):
         assert d is Decision.NONE
     if d is Decision.OPEN_LONG:
         assert sig is not None and direction * sig > th
