@@ -1,7 +1,7 @@
 # Resumo da entrega — win-alpha-factory
 
-**Data:** 19/09/2026 · **Branch:** `main` · **Commits:** 11 (`07663ff` → `242df79`)
-**Estado:** 319 testes passando · `mypy --strict` limpo · `ruff` limpo · ~10 mil linhas
+**Data:** 19/09/2026 · **Branch:** `main` · **Commits:** 13 (`07663ff` → `d213d52`)
+**Estado:** 340 testes passando · `mypy --strict` limpo · `ruff` limpo · ~11 mil linhas
 
 Este documento é para revisão. Ele diz o que foi construído, o que mudou em
 relação às specs originais (com o motivo) e o que ainda depende de você.
@@ -12,7 +12,7 @@ relação às specs originais (com o motivo) e o que ainda depende de você.
 
 | Marco | Entrega | Situação |
 |---|---|---|
-| **M0** Dia zero | — | **Seu.** Dados, hold-out, custos, pré-registro, gênesis real |
+| **M0** Dia zero | ferramenta de dados: leitura do MT5, emenda de contratos, checagens, hold-out, calendário, `data_hash` | ✅ ferramenta · ⏳ rodar com os dados reais |
 | **M1** Motor de DSL | tipos, validação, forma canônica, assinaturas, avaliadores vetorizado e incremental | ✅ completo |
 | **M2** Livro-razão | SQLite append-only, hash sobre todas as colunas, gatilhos contra UPDATE/DELETE | ✅ completo |
 | **M3** Backtest | porta para a sua API, selo com write-ahead, validação da resposta, custos | ✅ do lado da fábrica · ⏳ adaptador da API |
@@ -77,15 +77,15 @@ payloads.
 |---|---|---|
 | `dsl/` | ops, ast, parser, canonical, eval_vectorized, eval_incremental, market, errors, verdict | a linguagem das fórmulas |
 | `ledger/` | schema.sql, ledger | o livro-razão |
-| `backtest/` | engine, api_engine, runner, metrics, costs, errors | porta da API e selo |
-| `gate/` | config, dsr, pbo, robustness, collapse, errors | os cortes estatísticos |
+| `backtest/` | engine, api_engine, runner, metrics, costs, data, errors | porta da API, selo e preparação dos dados |
+| `gate/` | config, dsr, pbo, robustness, collapse, aggregate, errors | os cortes estatísticos |
 | `orchestrator/` | state, projection, router, budgets, graph, events, session | fluxo de uma tentativa |
 | `agents/` | schemas, hypothesis, formula, client | a zona de pesquisa |
 | `catalog/` | families, metrics, reward, bandit | artefato humano + escolha de família |
 | `codegen/` | transpiler, guards, telemetry, parity, templates/robo.mq5.j2 | AST → MQL5 |
 | `ops/` | coletor, alerts | o job diário |
 | `reports/` | session, monitor, charts, templates/ | HTML estático |
-| `cli.py` | — | genesis · verify · session · report · collect · monitor |
+| `cli.py` | — | data · genesis · verify · session · report · collect · monitor |
 
 ---
 
@@ -146,7 +146,10 @@ Todas estão escritas nas specs. Nenhuma foi escondida no código.
 | D4 | **Quem são as N configurações do PBO** | SPEC-fase-2 §2.9 | PBO de uma fórmula sozinha não existe |
 | D5 | Qual catálogo entra no gênesis: as 3 iniciais ou as 8 | `catalog/families.py` | Muda o `config_hash` |
 
-Com D2, D3 e D4 decididas, falta implementar a função `aggregate` (partições → `GateInputs`) e injetá-la na sessão. A sessão hoje recusa começar sem ela (`GatePending`), de propósito.
+Com D2, D3 e D4 decididas, falta **escolher a política** em `gate/aggregate.py`:
+a implementação de referência (`aggregate_partitions` + `AggregationPolicy`) já
+existe e é testada; `default_aggregate`, que a sessão usa, recusa de propósito
+até a decisão. É uma mudança de um arquivo.
 
 ### 4.2 Contrato da API de backtest (M3)
 Quando você trouxer o contrato, só `src/backtest/api_engine.py` muda. Perguntas listadas lá e na SPEC-fase-2 §2.0:
@@ -159,13 +162,23 @@ Quando você trouxer o contrato, só `src/backtest/api_engine.py` muda. Pergunta
 6. **Aceita dados sintéticos?** O teste de calibração do gate depende disso
 7. Guarda a lista dos ids executados (para reconciliar com o livro-razão)?
 
-### 4.3 Dia zero (M0)
-- [ ] Exportar WIN, ES e WDO em M1, 24 meses, com série contínua ajustada
-- [ ] **Separar o hold-out antes de qualquer outra coisa**
-- [ ] Converter o timestamp do MT5 (abertura) para fechamento (+1 min)
-- [ ] Calendário de pregão em CSV `day,bars_expected`
+### 4.3 Dia zero (M0) — a ferramenta está pronta
+
+```bash
+uv run python -m src.cli data --win WIN_2024.csv --win WIN_2025.csv   --es ES.csv --wdo WDO.csv --session 09:00-18:00   --out data/frame.npz --holdout-out C:/dados/holdout   --calendar-out config/calendario.csv
+```
+
+Um comando cobre: soma de um minuto no timestamp, emenda dos contratos por
+diferença, marcação dos dias de rolagem, checagem de buracos, volume zero,
+timestamps repetidos e alinhamento WIN × ES, separação do hold-out, calendário de
+pregão e o `data_hash`. Sem `--force`, ele recusa gravar se a checagem falhar.
+
+- [ ] Exportar WIN, ES e WDO em M1, 24 meses (um arquivo por contrato)
+- [ ] Rodar `cli data` e ler o relatório — **a defasagem de alinhamento precisa ser 0**
 - [ ] Conferir `config/costs.yaml` contra uma nota de corretagem real
-- [ ] Gravar o gênesis com `python -m src.cli genesis`, com o banco **fora do OneDrive**
+- [ ] Preencher o `gate-prereg.md`
+- [ ] `python -m src.cli genesis --data-hash <o impresso acima>`, com o banco
+      **fora do OneDrive**, e depois `cli verify`
 
 ### 4.4 Verificações que não dá para fazer aqui
 - [ ] **Compilar o `.mq5` no MetaEditor.** Nunca foi compilado; os testes conferem o texto. Espere ajustes de sintaxe na primeira compilação
