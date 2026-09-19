@@ -376,6 +376,37 @@ Roda a AST vetorizada sobre as mesmas barras que o EA logou e exige
 O pacote de implantação carrega: `.mq5`, hash da AST, hash do config do gate,
 certificado de prova (se houver) e o resultado da paridade.
 
+### Implementação (M7)
+
+- `codegen/transpiler.py` achata a AST em pós-ordem e preenche
+  `templates/robo.mq5.j2` com Jinja (`StrictUndefined`). Saída determinística,
+  byte a byte. `package()` grava o `.mq5` e um `manifest.json`
+- **O template espelha `eval_incremental` classe por classe** (`CRing`,
+  `CMonoDeque`, `CWelford` com ressincronização, `CLag`, `CZScore`...). Para
+  espelhar exatamente, a ressincronização da soma no Python passou a ser soma
+  sequencial, como no MQL5
+- **Guards espelham `codegen/guards.py`** — a especificação executável, usada nos
+  testes de propriedade do M9
+- **Índice 1, sempre.** `LoadBar` recusa `shift < 1`; referências (`ES`, `WDO`)
+  precisam de barra **fechada** no mesmo minuto (`iBarShift(..., exact)` ≥ 1)
+- **Referência sem barra no minuto → `DATA_GAP`:** a linha é logada, o estado não
+  avança e não há ordem. A paridade ignora essas linhas e reporta a barra faltante
+- **Aquecimento no `OnInit`** a partir do histórico (sem ordem e sem log). Barras
+  perdidas entre ticks são processadas e logadas, mas só a última pode operar
+- **Mapeamento de campos:** `volume` → `real_volume`, `trades` → `tick_volume`.
+  O exportador de dados do M0 precisa usar os mesmos campos
+- **`vwap` é recusado** (`NonTranspilable`): as barras M1 do MT5 não trazem VWAP
+- Métrica da `kill_condition` medida no próprio robô, só a declarada:
+  `spread_ticks` e `lag_ms` por tick; `realized_vol` e `ref_corr` sobre 60 barras
+  fechadas; `gap_overnight`, `minutes_to_open` e `fill_ratio` por contadores
+- NaN depois do aquecimento acende `g_fault`: o robô para de abrir posição e
+  continua logando
+
+**Não verificado aqui:** a compilação no MetaEditor. Os testes conferem o texto
+gerado (índice 1, saída antecipada, guards, cabeçalho da telemetria, todos os
+operadores, chaves e parênteses balanceados, ausência de rede). A primeira
+compilação real pode revelar ajustes de sintaxe MQL5.
+
 ---
 
 ## 3.13 `reports/` — o que substitui o front

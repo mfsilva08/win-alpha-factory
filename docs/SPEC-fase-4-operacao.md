@@ -52,7 +52,7 @@ TELEMETRY_COLUMNS = (
     "order_status",       # vazio | FILLED | PARTIAL | REJECTED_<motivo>
     "position",           # posição após a barra
     "daily_pnl_points",   # acumulado do dia, em pontos
-    "guard_blocked",      # vazio | CUTOFF | MARGIN | GRID | DAILY_LOSS | BREAKER
+    "guard_blocked",      # vazio | CUTOFF | MARGIN | GRID | DAILY_LOSS | BREAKER | DATA_GAP
     "kill_metric_name",   # nome da métrica declarada na hipótese
     "kill_metric_value",  # valor medido nesta barra, vazio se não aplicável
 )

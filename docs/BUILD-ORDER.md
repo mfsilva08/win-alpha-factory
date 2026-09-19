@@ -138,11 +138,12 @@ depois `router`, depois `budgets`, depois `graph`.
 **Spec:** `SPEC-fase-3-agentes.md` seção 3.12
 
 **Aceite:**
-- [ ] `.mq5` gerado compila no MetaEditor sem warning
-- [ ] `OnTick` usa índice 1 e sai cedo quando a barra não fechou
-- [ ] Guards rejeitam: após cutoff, preço fora da grade, tamanho acima da margem
-- [ ] `transpile` recusa AST cuja `kill_condition.metric` não é instrumentável
-- [ ] Paridade < 1e-9 em período com virada de dia e rolagem
+- [ ] `.mq5` gerado compila no MetaEditor sem warning — **não verificável aqui**
+- [x] `OnTick` usa índice 1 e sai cedo quando a barra não fechou
+- [x] Guards rejeitam: após cutoff, preço fora da grade, tamanho acima da margem
+- [x] `transpile` recusa AST cuja `kill_condition.metric` não é instrumentável
+- [x] Paridade < 1e-9 em período com virada de dia e rolagem — contra o robô
+      simulado em Python; contra o Strategy Tester, pendente da compilação
 
 ---
 

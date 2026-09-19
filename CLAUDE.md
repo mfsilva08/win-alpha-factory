@@ -38,7 +38,7 @@ src/
   gate/         dsr.py pbo.py robustness.py collapse.py config.py errors.py
   orchestrator/ state.py projection.py router.py graph.py budgets.py events.py session.py
   agents/       hypothesis.py formula.py schemas.py client.py
-  codegen/      transpiler.py parity.py telemetry.py templates/robo.mq5.j2
+  codegen/      transpiler.py parity.py telemetry.py guards.py templates/robo.mq5.j2
   ops/          coletor.py alerts.py
   reports/      session.py monitor.py templates/
   catalog/      families.py reward.py bandit.py metrics.py

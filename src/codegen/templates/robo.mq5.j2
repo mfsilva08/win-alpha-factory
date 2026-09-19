@@ -1,0 +1,742 @@
+//+------------------------------------------------------------------+
+//| {{ name }}.mq5
+//| GERADO por codegen/transpiler.py. NAO EDITE A MAO.
+//| Hipotese:  {{ hypothesis_id }} ({{ family }})
+//| AST hash:  {{ ast_hash }}
+//| Assinatura estrutural: {{ structural_sig }}
+//| Formula:   {{ formula }}
+//|
+//| Robo congelado (ADR-009): nao se modifica, nao faz chamada de rede,
+//| nao tem LLM. Grava uma linha de telemetria por barra fechada.
+//+------------------------------------------------------------------+
+#property copyright "win-alpha-factory"
+#property version   "1.00"
+#property description "{{ hypothesis_id }} | {{ ast_hash[:16] }}"
+
+#include <Trade/Trade.mqh>
+
+//--- parametros de operacao (nao alteram a estrategia)
+input string InpRefES           = "{{ ref_es }}";    // simbolo do S&P futuro no terminal
+input string InpRefWDO          = "{{ ref_wdo }}";   // simbolo do mini dolar no terminal
+input double InpDailyLossPoints = {{ daily_loss_points }};  // perda diaria maxima, em pontos
+input int    InpMaxRejections   = {{ max_rejections }};     // circuit breaker
+input ulong  InpMagic           = {{ magic }};
+
+//--- estrategia congelada
+#define SIGNAL_THRESHOLD    {{ threshold }}
+#define CONTRACTS           {{ contracts }}
+#define DIRECTION           {{ direction }}
+#define MAX_HOLDING_MIN     {{ max_holding_min }}
+#define STOP_POINTS         {{ stop_points }}
+#define TARGET_POINTS       {{ target_points }}
+#define CUTOFF_MIN          {{ cutoff_min }}
+#define SESSION_START_MIN   {{ session_start_min }}
+#define SESSION_END_MIN     {{ session_end_min }}
+#define TICK_SIZE           {{ tick_size }}
+#define POINT_VALUE         {{ point_value }}
+#define MARGIN_PER_CONTRACT {{ margin_per_contract }}
+#define WARMUP_BARS         {{ warmup_bars }}
+#define GUARD_EPS           1e-12
+#define KILL_METRIC_NAME    "{{ kill_metric }}"
+#define METRIC_LOOKBACK     60
+
+enum FieldId { F_CLOSE, F_HIGH, F_LOW, F_VOLUME, F_TRADES };
+enum RefId   { R_ES, R_WDO };
+enum LagMode { LM_LAG, LM_DELTA, LM_RET };
+enum BinOp   { B_ADD, B_SUB, B_MUL, B_DIV, B_GT, B_LT, B_AND, B_OR };
+
+struct BarData
+  {
+   datetime          close_time;   // fechamento = abertura + 60 s
+   int               tod;          // minuto do dia do fechamento
+   int               day_key;      // AAAAMMDD
+   double            open, close, high, low, volume, trades, es, wdo;
+  };
+
+bool g_fault = false;   // NaN depois do aquecimento: para de operar e registra
+
+double NaNValue() { return MathArcsin(2.0); }
+bool   IsNaN(const double x) { return !MathIsValidNumber(x); }
+
+//+------------------------------------------------------------------+
+//| Estruturas de janela: espelho de src/dsl/eval_incremental.py     |
+//+------------------------------------------------------------------+
+class CRing
+  {
+public:
+   double            m_buf[];
+   int               m_cap, m_head, m_size;
+   void              Init(const int cap) { m_cap = cap; ArrayResize(m_buf, cap); m_head = 0; m_size = 0; }
+   bool              Full(void) { return m_size == m_cap; }
+   double            At(const int i) { return m_buf[(m_head + i) % m_cap]; }   // 0 = mais antigo
+   void              Push(const double v)
+     {
+      if(m_size == m_cap) { m_buf[m_head] = v; m_head = (m_head + 1) % m_cap; }
+      else { m_buf[(m_head + m_size) % m_cap] = v; m_size++; }
+     }
+  };
+
+class CMonoDeque
+  {
+public:
+   long              m_idx[];
+   double            m_val[];
+   int               m_cap, m_head, m_size, m_w;
+   bool              m_max;
+   void              Init(const int w, const bool is_max)
+     {
+      m_w = w; m_max = is_max; m_cap = w + 1;
+      ArrayResize(m_idx, m_cap); ArrayResize(m_val, m_cap); m_head = 0; m_size = 0;
+     }
+   void              Push(const long i, const double v)
+     {
+      while(m_size > 0)
+        {
+         int back = (m_head + m_size - 1) % m_cap;
+         bool pop = m_max ? (m_val[back] <= v) : (m_val[back] >= v);
+         if(!pop) break;
+         m_size--;
+        }
+      int pos = (m_head + m_size) % m_cap;
+      m_idx[pos] = i; m_val[pos] = v; m_size++;
+      while(m_idx[m_head] <= i - m_w) { m_head = (m_head + 1) % m_cap; m_size--; }
+     }
+   double            Value(void) { return m_val[m_head]; }
+  };
+
+class CWelford
+  {
+public:
+   CRing             m_win;
+   CMonoDeque        m_hi, m_lo;
+   int               m_n, m_since, m_w;
+   long              m_i;
+   double            m_mean, m_m2;
+   void              Init(const int w)
+     {
+      m_w = w; m_win.Init(w); m_hi.Init(w, true); m_lo.Init(w, false);
+      m_n = 0; m_since = 0; m_i = 0; m_mean = 0.0; m_m2 = 0.0;
+     }
+   void              Add(const double x) { m_n++; double d = x - m_mean; m_mean += d / m_n; m_m2 += d * (x - m_mean); }
+   void              Remove(const double x)
+     {
+      m_n--;
+      if(m_n == 0) { m_mean = 0.0; m_m2 = 0.0; return; }
+      double d = x - m_mean; m_mean -= d / m_n; m_m2 -= d * (x - m_mean);
+     }
+   void              Push(const double v)
+     {
+      if(m_win.Full()) Remove(m_win.At(0));
+      m_win.Push(v); Add(v);
+      m_hi.Push(m_i, v); m_lo.Push(m_i, v); m_i++;
+      m_since++;
+      if(m_since >= m_w)   // ressincroniza a partir do buffer: erro nao se acumula
+        {
+         m_n = 0; m_mean = 0.0; m_m2 = 0.0;
+         for(int k = 0; k < m_win.m_size; k++) Add(m_win.At(k));
+         m_since = 0;
+        }
+     }
+   double            Std(void)
+     {
+      if(m_n < 2 || m_hi.Value() == m_lo.Value()) return 0.0;
+      double v = m_m2 / (m_n - 1);
+      if(v < 0.0) v = 0.0;
+      return MathSqrt(v);
+     }
+  };
+
+//+------------------------------------------------------------------+
+//| Nos da formula                                                   |
+//+------------------------------------------------------------------+
+class CNode
+  {
+public:
+   virtual          ~CNode(void) {}
+   virtual double    Step(const BarData &b) { return 0.0; }
+  };
+
+bool AcceptValue(const double x, long &seen)
+  {
+   if(IsNaN(x)) { if(seen > 0) g_fault = true; return false; }
+   seen++;
+   return true;
+  }
+
+class CField : public CNode
+  {
+   int               m_f;
+public:
+                     CField(const int f) { m_f = f; }
+   virtual double    Step(const BarData &b)
+     {
+      if(m_f == F_CLOSE)  return b.close;
+      if(m_f == F_HIGH)   return b.high;
+      if(m_f == F_LOW)    return b.low;
+      if(m_f == F_VOLUME) return b.volume;
+      return b.trades;
+     }
+  };
+
+class CRef : public CNode
+  {
+   int               m_r;
+public:
+                     CRef(const int r) { m_r = r; }
+   virtual double    Step(const BarData &b) { return m_r == R_ES ? b.es : b.wdo; }
+  };
+
+class CConst : public CNode
+  {
+   double            m_v;
+public:
+                     CConst(const double v) { m_v = v; }
+   virtual double    Step(const BarData &b) { return m_v; }
+  };
+
+class CInWindow : public CNode
+  {
+   int               m_lo, m_hi;
+public:
+                     CInWindow(const int lo, const int hi) { m_lo = lo; m_hi = hi; }
+   virtual double    Step(const BarData &b) { return (b.tod > m_lo && b.tod <= m_hi) ? 1.0 : 0.0; }
+  };
+
+class CMinutesSinceOpen : public CNode
+  {
+   int               m_day;
+   long              m_first;
+public:
+                     CMinutesSinceOpen(void) { m_day = -1; m_first = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      long minutes = (long)(b.close_time / 60);
+      if(b.day_key != m_day) { m_day = b.day_key; m_first = minutes; }
+      return (double)(minutes - m_first + 1);
+     }
+  };
+
+class CLag : public CNode
+  {
+   CNode            *m_c;
+   int               m_mode;
+   CRing             m_buf;
+public:
+                     CLag(CNode *c, const int k, const int mode) { m_c = c; m_mode = mode; m_buf.Init(k + 1); }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      m_buf.Push(x);
+      if(!m_buf.Full()) return NaNValue();
+      double old = m_buf.At(0);
+      if(m_mode == LM_LAG) return old;
+      if(IsNaN(x) || IsNaN(old)) return NaNValue();
+      if(m_mode == LM_DELTA) return x - old;
+      if(MathAbs(old) < GUARD_EPS) return 0.0;
+      return x / old - 1.0;
+     }
+  };
+
+class CRollingMean : public CNode
+  {
+   CNode            *m_c;
+   CRing             m_win;
+   double            m_total;
+   int               m_since, m_w;
+   long              m_seen;
+public:
+                     CRollingMean(CNode *c, const int w) { m_c = c; m_w = w; m_win.Init(w); m_total = 0.0; m_since = 0; m_seen = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      if(!AcceptValue(x, m_seen)) return NaNValue();
+      if(m_win.Full()) m_total -= m_win.At(0);
+      m_win.Push(x); m_total += x; m_since++;
+      if(m_since >= m_w)
+        {
+         m_total = 0.0;
+         for(int k = 0; k < m_win.m_size; k++) m_total += m_win.At(k);
+         m_since = 0;
+        }
+      return m_win.Full() ? m_total / m_w : NaNValue();
+     }
+  };
+
+class CRollingStd : public CNode
+  {
+   CNode            *m_c;
+   CWelford          m_wf;
+   long              m_seen;
+public:
+                     CRollingStd(CNode *c, const int w) { m_c = c; m_wf.Init(w); m_seen = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      if(!AcceptValue(x, m_seen)) return NaNValue();
+      m_wf.Push(x);
+      return m_wf.m_win.Full() ? m_wf.Std() : NaNValue();
+     }
+  };
+
+class CZScore : public CNode
+  {
+   CNode            *m_c;
+   CWelford          m_wf;
+   long              m_seen;
+public:
+                     CZScore(CNode *c, const int w) { m_c = c; m_wf.Init(w); m_seen = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      if(!AcceptValue(x, m_seen)) return NaNValue();
+      m_wf.Push(x);
+      if(!m_wf.m_win.Full()) return NaNValue();
+      double sd = m_wf.Std();
+      return sd < GUARD_EPS ? 0.0 : (x - m_wf.m_mean) / sd;
+     }
+  };
+
+class CExtreme : public CNode
+  {
+   CNode            *m_c;
+   CMonoDeque        m_dq;
+   long              m_i, m_seen;
+   int               m_w;
+public:
+                     CExtreme(CNode *c, const int w, const bool is_max) { m_c = c; m_w = w; m_dq.Init(w, is_max); m_i = 0; m_seen = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      if(!AcceptValue(x, m_seen)) return NaNValue();
+      m_dq.Push(m_i, x); m_i++;
+      return m_seen >= m_w ? m_dq.Value() : NaNValue();
+     }
+  };
+
+class CEma : public CNode
+  {
+   CNode            *m_c;
+   double            m_alpha, m_e;
+   int               m_w;
+   long              m_seen;
+public:
+                     CEma(CNode *c, const int w) { m_c = c; m_w = w; m_alpha = 2.0 / (w + 1); m_e = 0.0; m_seen = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      double v = m_c.Step(b);
+      if(IsNaN(v)) { if(m_seen > 0) g_fault = true; return NaNValue(); }
+      m_e = (m_seen == 0) ? v : m_e + m_alpha * (v - m_e);
+      m_seen++;
+      return m_seen >= m_w ? m_e : NaNValue();
+     }
+  };
+
+class CRankTs : public CNode
+  {
+   CNode            *m_c;
+   CRing             m_win;
+   int               m_w;
+   long              m_seen;
+public:
+                     CRankTs(CNode *c, const int w) { m_c = c; m_w = w; m_win.Init(w); m_seen = 0; }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      if(!AcceptValue(x, m_seen)) return NaNValue();
+      m_win.Push(x);
+      if(!m_win.Full()) return NaNValue();
+      if(m_w == 1) return 0.0;
+      int less = 0, equal = -1;
+      for(int k = 0; k < m_win.m_size; k++)
+        {
+         double v = m_win.At(k);
+         if(v < x) less++;
+         else if(v == x) equal++;
+        }
+      return 2.0 * (less + 0.5 * equal) / (m_w - 1) - 1.0;
+     }
+  };
+
+class CClip : public CNode
+  {
+   CNode            *m_c;
+   double            m_lo, m_hi;
+public:
+                     CClip(CNode *c, const double lo, const double hi) { m_c = c; m_lo = lo; m_hi = hi; }
+   virtual double    Step(const BarData &b)
+     {
+      double x = m_c.Step(b);
+      if(IsNaN(x)) return NaNValue();
+      return MathMin(MathMax(x, m_lo), m_hi);
+     }
+  };
+
+class CBinary : public CNode
+  {
+   CNode            *m_a, *m_b;
+   int               m_op;
+public:
+                     CBinary(const int op, CNode *a, CNode *b) { m_op = op; m_a = a; m_b = b; }
+   virtual double    Step(const BarData &bar)
+     {
+      double a = m_a.Step(bar);
+      double b = m_b.Step(bar);
+      if(m_op == B_ADD) return a + b;
+      if(m_op == B_SUB) return a - b;
+      if(m_op == B_MUL) return a * b;
+      if(IsNaN(a) || IsNaN(b)) return NaNValue();
+      if(m_op == B_DIV) return MathAbs(b) < GUARD_EPS ? 0.0 : a / b;
+      if(m_op == B_GT) return a > b ? 1.0 : 0.0;
+      if(m_op == B_LT) return a < b ? 1.0 : 0.0;
+      if(m_op == B_AND) return (a != 0.0 && b != 0.0) ? 1.0 : 0.0;
+      return (a != 0.0 || b != 0.0) ? 1.0 : 0.0;
+     }
+  };
+
+//+------------------------------------------------------------------+
+//| Estado global                                                    |
+//+------------------------------------------------------------------+
+CNode   *g_nodes[];
+CNode   *g_root;
+CTrade   g_trade;
+datetime g_last_processed = 0;
+long     g_bars_seen = 0;
+int      g_day_key = -1;
+int      g_file = INVALID_HANDLE;
+int      g_position = 0;          // +1 comprado, -1 vendido, 0 zerado
+datetime g_entry_time = 0;
+int      g_consecutive_rej = 0;
+double   g_daily_pnl_points = 0.0;
+int      g_orders_sent = 0, g_orders_filled = 0;
+double   g_prev_day_close = 0.0, g_gap_points = 0.0;
+double   g_km_sum = 0.0;
+long     g_km_n = 0;
+long     g_es_move_msc = 0;
+double   g_es_last = 0.0, g_win_last = 0.0;
+
+void BuildGraph(void)
+  {
+   ArrayResize(g_nodes, {{ nodes | length }});
+{%- for line in nodes %}
+   g_nodes[{{ loop.index0 }}] = {{ line }};
+{%- endfor %}
+   g_root = g_nodes[{{ nodes | length - 1 }}];
+  }
+
+//+------------------------------------------------------------------+
+//| Barras: sempre fechadas (indice >= 1)                            |
+//+------------------------------------------------------------------+
+bool LoadBar(const int shift, BarData &b)
+  {
+   if(shift < 1) return false;   // indice 0 e a barra em formacao: nunca
+   MqlRates r[];
+   if(CopyRates(_Symbol, PERIOD_M1, shift, 1, r) != 1) return false;
+   b.close_time = r[0].time + 60;
+   MqlDateTime dt;
+   TimeToStruct(b.close_time, dt);
+   b.tod = dt.hour * 60 + dt.min;
+   b.day_key = dt.year * 10000 + dt.mon * 100 + dt.day;
+   b.open = r[0].open; b.close = r[0].close; b.high = r[0].high; b.low = r[0].low;
+   b.volume = (double)r[0].real_volume;   // contratos
+   b.trades = (double)r[0].tick_volume;   // negocios (ver SPEC-fase-3 §3.12)
+   b.es = 0.0; b.wdo = 0.0;
+{%- if needs_es %}
+   int s_es = iBarShift(InpRefES, PERIOD_M1, r[0].time, true);
+   if(s_es < 1) return false;            // referencia sem barra fechada no mesmo minuto
+   b.es = iClose(InpRefES, PERIOD_M1, s_es);
+{%- endif %}
+{%- if needs_wdo %}
+   int s_wdo = iBarShift(InpRefWDO, PERIOD_M1, r[0].time, true);
+   if(s_wdo < 1) return false;
+   b.wdo = iClose(InpRefWDO, PERIOD_M1, s_wdo);
+{%- endif %}
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| Guards: espelho de src/codegen/guards.py                         |
+//+------------------------------------------------------------------+
+double ToGrid(const double price, const int side)
+  {
+   double q = price / TICK_SIZE;
+   double steps = side > 0 ? MathCeil(q - 1e-9) : MathFloor(q + 1e-9);
+   return steps * TICK_SIZE;
+  }
+
+bool OnGrid(const double price) { return MathAbs(price / TICK_SIZE - MathRound(price / TICK_SIZE)) < 1e-9; }
+
+int MaxLots(void)
+  {
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   int lots = (int)MathFloor(equity / MARGIN_PER_CONTRACT);
+   return lots < 0 ? 0 : lots;
+  }
+
+string GuardOrder(const int tod, const int lots, const double price)
+  {
+   if(g_consecutive_rej >= InpMaxRejections) return "BREAKER";
+   if(g_daily_pnl_points <= -InpDailyLossPoints) return "DAILY_LOSS";
+   if(tod >= CUTOFF_MIN || !(tod > SESSION_START_MIN && tod <= SESSION_END_MIN)) return "CUTOFF";
+   if(lots < 1 || lots > MaxLots()) return "MARGIN";
+   if(!OnGrid(price)) return "GRID";
+   return "";
+  }
+
+int DecideSide(const double sig)
+  {
+   if(IsNaN(sig) || g_position != 0) return 0;
+   double s = DIRECTION * sig;
+   if(s > SIGNAL_THRESHOLD) return 1;
+   if(s < -SIGNAL_THRESHOLD) return -1;
+   return 0;
+  }
+
+//+------------------------------------------------------------------+
+//| Metrica da kill_condition: {{ kill_metric }}
+//+------------------------------------------------------------------+
+void AccumulateTickMetric(void)
+  {
+{%- if kill_metric == "spread_ticks" %}
+   MqlTick t;
+   if(SymbolInfoTick(_Symbol, t) && t.ask > t.bid) { g_km_sum += (t.ask - t.bid) / TICK_SIZE; g_km_n++; }
+{%- elif kill_metric == "lag_ms" %}
+   MqlTick es, win;
+   if(SymbolInfoTick(InpRefES, es) && es.last != g_es_last) { g_es_last = es.last; g_es_move_msc = es.time_msc; }
+   if(SymbolInfoTick(_Symbol, win) && win.last != g_win_last)
+     {
+      g_win_last = win.last;
+      if(g_es_move_msc > 0 && win.time_msc >= g_es_move_msc)
+        { g_km_sum += (double)(win.time_msc - g_es_move_msc); g_km_n++; g_es_move_msc = 0; }
+     }
+{%- endif %}
+  }
+
+double ReturnsStd(const string sym, const int n)
+  {
+   double mean = 0.0, m2 = 0.0; int k = 0;
+   for(int s = 1; s <= n; s++)
+     {
+      double c0 = iClose(sym, PERIOD_M1, s), c1 = iClose(sym, PERIOD_M1, s + 1);
+      if(c0 <= 0.0 || c1 <= 0.0) continue;
+      double x = c0 / c1 - 1.0; k++;
+      double d = x - mean; mean += d / k; m2 += d * (x - mean);
+     }
+   return k > 1 ? MathSqrt(m2 / (k - 1)) : NaNValue();
+  }
+
+double ReturnsCorr(const string a, const string b, const int n)
+  {
+   double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0; int k = 0;
+   for(int s = 1; s <= n; s++)
+     {
+      double a0 = iClose(a, PERIOD_M1, s), a1 = iClose(a, PERIOD_M1, s + 1);
+      double b0 = iClose(b, PERIOD_M1, s), b1 = iClose(b, PERIOD_M1, s + 1);
+      if(a1 <= 0.0 || b1 <= 0.0) continue;
+      double x = a0 / a1 - 1.0, y = b0 / b1 - 1.0; k++;
+      sa += x; sb += y; saa += x * x; sbb += y * y; sab += x * y;
+     }
+   if(k < 3) return NaNValue();
+   double cov = sab - sa * sb / k, va = saa - sa * sa / k, vb = sbb - sb * sb / k;
+   return (va <= 0 || vb <= 0) ? NaNValue() : cov / MathSqrt(va * vb);
+  }
+
+double KillMetricValue(const BarData &b)
+  {
+   double v = NaNValue();
+{%- if kill_metric in ("spread_ticks", "lag_ms") %}
+   if(g_km_n > 0) v = g_km_sum / g_km_n;
+   g_km_sum = 0.0; g_km_n = 0;
+{%- elif kill_metric == "realized_vol" %}
+   v = ReturnsStd(_Symbol, METRIC_LOOKBACK);
+{%- elif kill_metric == "gap_overnight" %}
+   v = g_gap_points;
+{%- elif kill_metric == "minutes_to_open" %}
+   v = (double)(b.tod - SESSION_START_MIN);
+{%- elif kill_metric == "ref_corr" %}
+   v = ReturnsCorr(_Symbol, InpRefES, METRIC_LOOKBACK);
+{%- elif kill_metric == "fill_ratio" %}
+   if(g_orders_sent > 0) v = (double)g_orders_filled / g_orders_sent;
+{%- endif %}
+   return v;
+  }
+
+//+------------------------------------------------------------------+
+//| Telemetria: uma linha por barra, com ou sem ordem                |
+//+------------------------------------------------------------------+
+string Num(const double x) { return IsNaN(x) ? "" : StringFormat("%.17g", x); }
+
+string IsoMinute(const datetime t)
+  {
+   string s = TimeToString(t, TIME_DATE | TIME_MINUTES);
+   StringReplace(s, ".", "-"); StringReplace(s, " ", "T");
+   return s;
+  }
+
+void OpenDayFile(const BarData &b)
+  {
+   if(g_file != INVALID_HANDLE) FileClose(g_file);
+   string name = StringFormat("telemetry\\win_%08d.csv", b.day_key);
+   bool exists = FileIsExist(name);
+   g_file = FileOpen(name, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, ',');
+   if(g_file == INVALID_HANDLE) return;
+   FileSeek(g_file, 0, SEEK_END);
+   if(!exists)
+      FileWrite(g_file, "ts", "bar_time", "signal", "threshold", "decision", "contracts",
+                "ref_price", "fill_price", "slippage_ticks", "order_status", "position",
+                "daily_pnl_points", "guard_blocked", "kill_metric_name", "kill_metric_value");
+  }
+
+void LogDecision(const BarData &b, const double sig, const string decision, const int lots,
+                 const double ref_price, const double fill_price, const double slip,
+                 const string status, const string guard)
+  {
+   if(g_file == INVALID_HANDLE) return;
+   string ts = IsoMinute(TimeGMT()) + "Z";
+   FileWrite(g_file, ts, IsoMinute(b.close_time), Num(sig), Num(SIGNAL_THRESHOLD), decision,
+             IntegerToString(lots), Num(ref_price), Num(fill_price), Num(slip), status,
+             IntegerToString(g_position), Num(g_daily_pnl_points), guard, KILL_METRIC_NAME,
+             Num(KillMetricValue(b)));
+   FileFlush(g_file);
+  }
+
+//+------------------------------------------------------------------+
+//| Posicao                                                          |
+//+------------------------------------------------------------------+
+void SyncPosition(void)
+  {
+   if(!PositionSelect(_Symbol) || (ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic)
+     { g_position = 0; return; }
+   g_position = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
+  }
+
+void UpdateDailyPnl(const BarData &b)
+  {
+   MqlDateTime dt; TimeToStruct(b.close_time, dt);
+   dt.hour = 0; dt.min = 0; dt.sec = 0;
+   if(!HistorySelect(StructToTime(dt), TimeCurrent())) return;
+   double brl = 0.0;
+   for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
+     {
+      ulong d = HistoryDealGetTicket(i);
+      if((ulong)HistoryDealGetInteger(d, DEAL_MAGIC) != InpMagic) continue;
+      brl += HistoryDealGetDouble(d, DEAL_PROFIT);
+     }
+   g_daily_pnl_points = brl / POINT_VALUE;
+  }
+
+//+------------------------------------------------------------------+
+//| Uma barra fechada                                                |
+//+------------------------------------------------------------------+
+void ProcessBar(const int shift, const bool log_bar, const bool may_trade)
+  {
+   BarData b;
+   if(!LoadBar(shift, b))
+     {
+      if(log_bar && g_file != INVALID_HANDLE)
+        {
+         BarData empty; ZeroMemory(empty);
+         empty.close_time = iTime(_Symbol, PERIOD_M1, shift) + 60;
+         LogDecision(empty, NaNValue(), "NONE", 0, 0.0, NaNValue(), NaNValue(), "", "DATA_GAP");
+        }
+      return;   // sem dado nao ha passo: o estado nao avanca com informacao incompleta
+     }
+   if(b.day_key != g_day_key)
+     {
+      g_gap_points = g_prev_day_close > 0.0 ? b.open - g_prev_day_close : 0.0;
+      g_day_key = b.day_key; g_consecutive_rej = 0; g_orders_sent = 0; g_orders_filled = 0;
+      if(log_bar) OpenDayFile(b);
+     }
+   double sig = g_root.Step(b);
+   g_bars_seen++;
+   g_prev_day_close = b.close;
+   if(!log_bar) return;   // aquecimento a partir do historico: sem ordem e sem log
+
+   SyncPosition();
+   UpdateDailyPnl(b);
+   string decision = "NONE", status = "", guard = "";
+   int lots = 0;
+   double ref_price = SymbolInfoDouble(_Symbol, SYMBOL_LAST);
+   double fill = NaNValue(), slip = NaNValue();
+
+   if(!may_trade) { }   // barra atrasada: so registra
+   else if(g_position != 0)
+     {
+      int held = (int)((b.close_time - g_entry_time) / 60);
+      if(b.tod >= CUTOFF_MIN || held >= MAX_HOLDING_MIN)   // zeragem compulsoria ou tempo
+        {
+         decision = "CLOSE";
+         status = g_trade.PositionClose(_Symbol) ? "FILLED" : "REJECTED_" + IntegerToString(g_trade.ResultRetcode());
+        }
+     }
+   else if(!g_fault && g_bars_seen > WARMUP_BARS)
+     {
+      int side = DecideSide(sig);
+      if(side != 0)
+        {
+         lots = CONTRACTS;
+         double quote = side > 0 ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double px = ToGrid(quote, side);
+         guard = GuardOrder(b.tod, lots, px);
+         if(guard == "")
+           {
+            double sl = STOP_POINTS > 0 ? ToGrid(px - side * STOP_POINTS, -side) : 0.0;
+            double tp = TARGET_POINTS > 0 ? ToGrid(px + side * TARGET_POINTS, -side) : 0.0;
+            g_orders_sent++;
+            bool ok = side > 0 ? g_trade.Buy(lots, _Symbol, px, sl, tp) : g_trade.Sell(lots, _Symbol, px, sl, tp);
+            uint rc = g_trade.ResultRetcode();
+            if(ok && (rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_PLACED))
+              {
+               decision = side > 0 ? "OPEN_LONG" : "OPEN_SHORT";
+               status = "FILLED"; g_orders_filled++; g_consecutive_rej = 0;
+               g_entry_time = b.close_time;
+               fill = g_trade.ResultPrice();
+               slip = side * (fill - ref_price) / TICK_SIZE;
+              }
+            else
+              {
+               decision = "REJECTED"; status = "REJECTED_" + IntegerToString(rc);
+               g_consecutive_rej++;
+              }
+           }
+         else lots = 0;
+        }
+     }
+   SyncPosition();
+   LogDecision(b, sig, decision, lots, ref_price, fill, slip, status, guard);
+  }
+
+//+------------------------------------------------------------------+
+int OnInit(void)
+  {
+   BuildGraph();
+   g_trade.SetExpertMagicNumber(InpMagic);
+{%- if needs_es or kill_metric in ("lag_ms", "ref_corr") %}
+   if(!SymbolSelect(InpRefES, true)) return INIT_FAILED;
+{%- endif %}
+{%- if needs_wdo %}
+   if(!SymbolSelect(InpRefWDO, true)) return INIT_FAILED;
+{%- endif %}
+   // aquecimento: reconstroi o estado a partir do historico, barras fechadas apenas
+   int start = MathMin(Bars(_Symbol, PERIOD_M1) - 1, 3 * WARMUP_BARS + 2);
+   for(int s = start; s >= 2; s--) ProcessBar(s, false, false);
+   g_last_processed = iTime(_Symbol, PERIOD_M1, 2);
+   return INIT_SUCCEEDED;
+  }
+
+void OnDeinit(const int reason)
+  {
+   if(g_file != INVALID_HANDLE) FileClose(g_file);
+   for(int i = ArraySize(g_nodes) - 1; i >= 0; i--)
+      if(CheckPointer(g_nodes[i]) == POINTER_DYNAMIC) delete g_nodes[i];
+  }
+
+void OnTick(void)
+  {
+   if(iTime(_Symbol, PERIOD_M1, 1) == g_last_processed) { AccumulateTickMetric(); return; }   // barra nao fechou: sai
+   AccumulateTickMetric();
+   int from = iBarShift(_Symbol, PERIOD_M1, g_last_processed, true) - 1;
+   if(from < 1) from = 1;
+   for(int s = from; s >= 1; s--) ProcessBar(s, true, s == 1);   // atrasadas: logadas, sem ordem
+   g_last_processed = iTime(_Symbol, PERIOD_M1, 1);
+  }
+//+------------------------------------------------------------------+

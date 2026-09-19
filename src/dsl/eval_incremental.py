@@ -102,7 +102,10 @@ class _RollingSum:
         self.total += v
         self.since_sync += 1
         if self.since_sync >= win.w:
-            self.total = math.fsum(win.buf)
+            # soma sequencial, na mesma ordem do template MQL5 (paridade com o robô)
+            self.total = 0.0
+            for x in win.buf:
+                self.total += x
             self.since_sync = 0
 
     def mean(self) -> float:
