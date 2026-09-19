@@ -85,10 +85,17 @@ adaptador existir:
 **Spec:** `SPEC-fase-2-validacao.md` seções 2.7 a 2.12
 
 **Aceite:**
-- [ ] `sr_star(0.60, 2400) ≈ 2.71` e `sr_star(0.60, 10) ≈ 1.22`
-- [ ] `GateConfig.load()` falha se o hash do pré-registro não bater com o gênesis
-- [ ] Bateria de robustez é conjuntiva e conta como uma tentativa
-- [ ] **Menos de 5% de 1.000 estratégias sobre ruído recebe `ACCEPTED`**
+- [x] `sr_star(0.60, 2400) ≈ 2.71` e `sr_star(0.60, 10) ≈ 1.22`
+- [x] `GateConfig.load()` falha se o hash do pré-registro não bater com o gênesis
+- [x] Bateria de robustez é conjuntiva e conta como uma tentativa
+- [x] Colapso com os sete limiares do pré-registro, na ordem da spec
+- [x] PBO por CSCV: ~0,5 sobre ruído, ~0 com configuração de fato melhor
+- [ ] Decidir quem são as N configurações do PBO (§2.9)
+- [ ] Decidir 28 partições × 7 caminhos e implementar a agregação (§2.3)
+- [ ] Decidir onde fica o Sharpe de cada tentativa, para o `var_sr` (§2.8)
+- [ ] Pré-registro preenchido — hoje o carregador recusa, com razão
+- [ ] **Menos de 5% de 1.000 estratégias sobre ruído recebe `ACCEPTED`** —
+      bloqueado pelo motor (SPEC-fase-2 §2.0, pergunta 6)
 
 > **Marco que importa.** Ao fim de M4 existe um sistema útil sem nenhum agente:
 > fórmulas escritas à mão, testadas com rigor superior ao de boa parte das mesas.

@@ -9,6 +9,7 @@ instrução nas specs parecer ineficiente, provavelmente uma delas está por tr�
 | [002](#adr-002) | Plataforma: MetaTrader 5, não Profit/NTSL | decidido |
 | [003](#adr-003) | Motor de backtest em Python até medir | decidido |
 | [004](#adr-004) | Teto global de tentativas | **bloqueante — decidir antes da Fase 2** |
+| [012](#adr-012) | Backtest executado por API externa | decidido |
 | [005](#adr-005) | `purgedcv` como dependência ou reimplementação | aberto |
 | [006](#adr-006) | Verificação formal no escopo v1 | aberto |
 | [007](#adr-007) | Combinação de múltiplas fórmulas em portfólio | fora do escopo v1 |
@@ -134,6 +135,26 @@ mensagem endereçada a outro.
 journal_mode=WAL`, uma transação por append. O livro-razão é o único ponto de
 contenção do sistema, e ele é intencional — contadores por thread multiplicariam
 as falsas descobertas.
+
+---
+
+## ADR-012 — Backtest executado por API externa
+
+**Decisão (19/09/2026):** a execução do backtest fica numa API externa, chamada com
+o id do teste. A fábrica define a requisição, valida a resposta e sela o
+resultado no livro-razão. Ver SPEC-fase-2 §2.0.
+
+**Motivo:** já existe uma estrutura pronta de execução de backtest.
+
+**Consequências:**
+
+- O write-ahead (R4) continua na fábrica: toda chamada vira tentativa, inclusive
+  com falha de rede ou resposta inválida
+- As regras de simulação (preenchimento pessimista, cutoff, fronteira de pregão)
+  viram contrato que a API precisa cumprir, verificado por testes de contrato
+- O teste de calibração do gate depende de a API aceitar dados sintéticos, ou de
+  um motor local cuja concordância com a API seja demonstrada
+- A API é zona de verificação: vê métricas, nunca fala com LLM (R2)
 
 ---
 

@@ -13,7 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 agents = ["langgraph>=0.2", "anthropic>=0.40"]
-dev = ["pytest>=8.0", "mypy>=1.11", "ruff>=0.6", "hypothesis>=6.100", "types-PyYAML>=6.0"]
+dev = ["pytest>=8.0", "mypy>=1.11", "ruff>=0.6", "hypothesis>=6.100", "types-PyYAML>=6.0", "scipy-stubs>=1.13"]
 
 [tool.mypy]
 strict = true

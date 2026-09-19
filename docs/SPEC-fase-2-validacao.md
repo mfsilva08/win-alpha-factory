@@ -246,6 +246,19 @@ def load() -> GateConfig:
 
 Sem override por variável de ambiente, sem parâmetro de função, sem exceção.
 
+Implementação (`gate/config.py`):
+
+- `load(ledger, path=docs/gate-prereg.md)`. O caminho só é parâmetro para teste;
+  nenhum limiar é
+- o sha256 é dos **bytes** do arquivo, comparado com
+  `ledger.genesis_info().prereg_sha256`. Uma troca de LF por CRLF muda o hash —
+  por isso o `.gitattributes` fixa LF
+- valores e marcadores são lidos **só dentro dos blocos de código**: o cabeçalho
+  do arquivo cita `<<< DECIDIR >>>` em prosa e não pode travar o carregador
+- além dos limiares, lê `MAX_TRIALS`, `n_grupos`, `k_teste`, `embargo_mult` e
+  confere `caminhos == C(n_grupos, k_teste)`
+- fração fora de `[0, 1]`, contagem `< 1` ou chave repetida → `PreregInvalid`
+
 ## 2.8 `gate/dsr.py`
 
 ```python
@@ -274,6 +287,18 @@ do livro-razão.
 > cada tentativa fica gravado — liberar um `payload` de métricas na zona de
 > verificação ou um armazém separado — sem abrir caminho para a zona de pesquisa.
 
+**Unidades — decisão do M4.** `sr`, `sr_star` e `var_sr` entram no DSR em Sharpe
+**por observação**, na mesma frequência de `T`. Sharpes anualizados precisam ser
+convertidos com `deannualize(sr, períodos_por_ano)` antes, e `var_sr` também.
+O exemplo `var_sr = 0,60 → SR* ≈ 2,71` só faz sentido em unidades anualizadas;
+misturar Sharpe anualizado com `sqrt(T - 1)` de operações infla o DSR.
+`kurt` é a curtose **não excedente** (normal = 3). Com uma única tentativa,
+`sr_star = 0`. Denominador não positivo levanta `StatisticsError`.
+
+Consequência para o contrato da API (§2.0): além do Sharpe anualizado, cada
+partição precisa informar o Sharpe por operação e o número de operações, ou o
+fator de anualização usado.
+
 **Confira as fórmulas contra Bailey & López de Prado (2014) antes de fechar a
 implementação.** Errar um sinal aqui compromete todo o resto. A biblioteca
 `purgedcv` implementa e serve de referência cruzada.
@@ -287,6 +312,15 @@ Probabilidade de overfitting do backtest, a partir dos caminhos do CPCV: para ca
 partição, seleciona a melhor configuração dentro da amostra e observa em que
 percentil ela cai fora dela. PBO é a fração de vezes em que ela cai na metade de
 baixo.
+
+Implementado como CSCV (Bailey et al., 2015): `pbo(perf, n_blocks)` sobre uma
+matriz `(T, N)` de desempenho — T observações, N configurações. Ruído dá PBO perto
+de 0,5; uma configuração de fato melhor dá PBO perto de 0.
+
+> **Pendência para fechar o M4.** PBO exige N >= 2 configurações, e uma fórmula
+> sozinha é uma configuração só. Falta decidir quem são as N: as variantes de
+> janela da bateria de robustez, as fórmulas da mesma hipótese, ou outra coisa.
+> Cada opção tem consequência diferente para a contagem de tentativas.
 
 ## 2.10 `gate/robustness.py`
 
@@ -307,13 +341,30 @@ Quatro testes, **conjuntivos** — todos precisam passar:
 tentativas no livro-razão. Exigir consistência é robustez e conta como uma.
 
 Toda a bateria conta como **uma única** tentativa, já registrada pelo backtest
-original.
+original. As variantes **não** passam por `runner.run` e não entram no livro-razão.
+
+Regras de julgamento implementadas (`gate/robustness.py`):
+
+| Teste | Passa quando |
+|---|---|
+| `RUIDO` | mediana do líquido das 100 reamostragens `> 0` |
+| `SUBPERIODOS` | líquido de referência `> 0` e os 3 subperíodos `> 0` |
+| `CUSTOS` | líquido `> 0` a 1,5× e a 2,0× (slippage arredondado para cima) |
+| `PARAMETROS` | líquido de referência `> 0` e cada variante `> 0` |
+
+Variantes de parâmetro: **todas** as janelas vão para o bucket vizinho de baixo
+(uma variante) e **todas** para o de cima (outra). Variante idêntica à original é
+descartada. A execução das variantes com ruído e por subperíodo depende de a API
+aceitar esses pedidos (§2.0).
 
 ## 2.11 `gate/collapse.py`
 
 ```python
-def collapse(m: PathMetrics, n_trials: int, cfg: GateConfig) -> Verdict:
+def collapse(m: GateInputs, n_trials: int, var_sr: float, cfg: GateConfig) -> Verdict:
     if m.total_trades < cfg.min_total_trades:      return Verdict.INSUFFICIENT_SAMPLE
+    if m.min_path_trades < cfg.min_trades_per_path:  return Verdict.INSUFFICIENT_SAMPLE
+    if m.active_days < cfg.min_active_days:        return Verdict.INSUFFICIENT_SAMPLE
+    if m.max_day_share > cfg.max_trade_concentration: return Verdict.INSUFFICIENT_SAMPLE
     if m.gross_points <= m.cost_points:            return Verdict.COST_DOMINATED
     if m.sign_flip_frac > cfg.max_sign_flip_frac:  return Verdict.UNSTABLE_ACROSS_FOLDS
     if m.pbo > cfg.max_pbo:                        return Verdict.FAILED_GATE
@@ -321,6 +372,14 @@ def collapse(m: PathMetrics, n_trials: int, cfg: GateConfig) -> Verdict:
     if not m.robustness_all_passed:                return Verdict.FAILED_GATE
     return Verdict.ACCEPTED
 ```
+
+Os três limiares de triagem que o pré-registro declarava e o esboço não usava
+(`min_trades_per_path`, `min_active_days`, `max_trade_concentration`) entram
+logo depois do primeiro e produzem `INSUFFICIENT_SAMPLE`: são falta de evidência
+independente, não falha estatística. `var_sr` virou parâmetro explícito.
+
+`GateInputs` chega já agregado. A agregação das partições do CPCV depende da
+decisão 28 partições × 7 caminhos (§2.3).
 
 A ordem é do mais barato e mais acionável ao mais caro. `COST_DOMINATED` vem cedo
 porque diz "vá para horizonte maior" sem dizer nada sobre lucro.
@@ -344,6 +403,11 @@ def test_gate_rejects_noise():
             accepted += 1
     assert accepted < 50
 ```
+
+> **Bloqueado.** Este teste precisa de um motor que rode 1.000 estratégias sobre
+> séries sintéticas. Com o backtest na API (§2.0), ele depende da resposta à
+> pergunta 6. Sem ele, o M4 não está concluído — nenhuma das outras verificações
+> substitui esta.
 
 Se passar mais de 5%, o gate está frouxo e o projeto inteiro vai aprovar ruído sem
 que ninguém perceba, porque ruído aprovado parece alfa até o dinheiro acabar.
