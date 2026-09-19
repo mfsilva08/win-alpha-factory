@@ -7,6 +7,8 @@
     uv run python -m src.cli collect  --ledger ... --day 2026-09-15 --hypothesis ... \\
                                       --telemetry-dir ... --expected-bars 540
     uv run python -m src.cli monitor  --ledger ... --hypothesis ...
+    uv run python -m src.cli data     --win WIN_2024.csv --win WIN_2025.csv --es ES.csv \
+                                      --out data/frame.npz --holdout-out C:/dados/holdout
 
 Códigos de saída: 0 ok · 1 erro de uso ou dado · 2 bloqueado por decisão pendente.
 """
@@ -16,7 +18,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 from src.agents.schemas import load_hypothesis
@@ -71,6 +73,53 @@ def cmd_session(a: argparse.Namespace) -> int:
         print(f"  - {p}")
     print(f"hipótese {h.id} ({h.family}) lida e válida; nada foi gravado no livro-razão.")
     return 2
+
+
+def _parse_session(text: str) -> tuple[time, time]:
+    try:
+        a, b = text.split("-")
+        return time.fromisoformat(a.strip()), time.fromisoformat(b.strip())
+    except ValueError:
+        raise SystemExit("--session usa o formato HH:MM-HH:MM") from None
+
+
+def cmd_data(a: argparse.Namespace) -> int:
+    """Lê a exportação do MT5, emenda contratos, confere e separa o hold-out."""
+    from src.backtest import data as md
+
+    win_parts = [md.read_mt5_csv(Path(p)) for p in a.win]
+    win, rolls = md.stitch_by_difference(win_parts)
+    refs = {}
+    for sym, paths in (("ES", a.es or []), ("WDO", a.wdo or [])):
+        if paths:
+            part = [md.read_mt5_csv(Path(p)) for p in paths]
+            refs[sym], _ = md.stitch_by_difference(part)
+    frame, dropped = md.build_frame(win, refs, session=_parse_session(a.session),
+                                    roll_days=rolls)
+    report = md.check(frame, dropped)
+    print(report.text())
+    if rolls:
+        print(f"dias de rolagem marcados: {', '.join(str(d) for d in sorted(rolls))}")
+    if not report.ok and not a.force:
+        print("\nchecagens falharam. Corrija a exportação ou use --force.", file=sys.stderr)
+        return 1
+    if a.calendar_out:
+        print(f"calendário: {md.write_calendar(report, Path(a.calendar_out))}")
+    if a.holdout_out:
+        research, holdout = md.split_holdout(frame, a.holdout_months)
+        if a.out and Path(a.holdout_out).resolve() == Path(a.out).resolve().parent:
+            print("o hold-out precisa ficar em outro diretório", file=sys.stderr)
+            return 1
+        hpath = Path(a.holdout_out) / "holdout.npz"
+        md.save_frame(holdout, hpath)
+        print(f"hold-out ({len(holdout)} barras): {hpath}")
+        print(f"  data_hash do hold-out: {md.data_hash(holdout)}")
+        frame = research
+    if a.out:
+        md.save_frame(frame, Path(a.out))
+        print(f"pesquisa ({len(frame)} barras): {a.out}")
+    print(f"data_hash da pesquisa: {md.data_hash(frame)}")
+    return 0
 
 
 def cmd_report(a: argparse.Namespace) -> int:
@@ -168,6 +217,19 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--costs", default=str(DEFAULT_COSTS))
     m.add_argument("--out", default="relatorios/monitor.html")
     m.set_defaults(fn=cmd_monitor)
+
+    d = sub.add_parser("data", help="prepara e confere a exportação do MT5")
+    d.add_argument("--win", required=True, action="append",
+                   help="um arquivo por contrato, em ordem cronológica")
+    d.add_argument("--es", action="append")
+    d.add_argument("--wdo", action="append")
+    d.add_argument("--session", default="09:00-18:00")
+    d.add_argument("--out", help="frame de pesquisa (.npz)")
+    d.add_argument("--holdout-out", help="diretório do hold-out — fora de data/")
+    d.add_argument("--holdout-months", type=int, default=6)
+    d.add_argument("--calendar-out")
+    d.add_argument("--force", action="store_true", help="grava mesmo com checagem falhando")
+    d.set_defaults(fn=cmd_data)
     return p
 
 

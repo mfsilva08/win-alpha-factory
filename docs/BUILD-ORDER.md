@@ -11,6 +11,10 @@ Cada marco abaixo tem critério de aceite objetivo. Não avance sem passar.
 
 Ver `dia-zero-checklist.md`. O que precisa existir:
 
+> **Ferramenta pronta:** `python -m src.cli data` faz a emenda dos contratos, as
+> checagens, o hold-out, o calendário e o `data_hash`; `python -m src.cli genesis`
+> grava o registro zero. Falta você rodar com os dados reais.
+
 - [ ] Barras M1 de WIN, ES e WDO exportadas, 24 meses, série contínua ajustada
 - [ ] **Hold-out separado em outro diretório, antes de qualquer outra coisa**
 - [ ] Checagens de dados passando (buracos, volume zero, alinhamento WIN×ES)

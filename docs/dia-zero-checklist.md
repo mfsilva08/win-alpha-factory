@@ -38,6 +38,24 @@ O WIN vence em meses pares. Se você emendar os contratos sem ajustar, a série 
 
 Para intradiário com horizonte de minutos, o ajuste por diferença basta.
 
+**A ferramenta faz tudo isto de uma vez:**
+
+```bash
+uv run python -m src.cli data \
+  --win WIN_2024.csv --win WIN_2025.csv \
+  --es ES.csv --wdo WDO.csv \
+  --session 09:00-18:00 \
+  --out data/frame.npz \
+  --holdout-out C:/dados/holdout \
+  --calendar-out config/calendario.csv
+```
+
+Ela soma um minuto aos timestamps (o MT5 grava a abertura), emenda os contratos
+por diferença, marca os dias de rolagem, roda as checagens, separa o hold-out em
+outro diretório, escreve o calendário de pregão e imprime o `data_hash` — que é o
+que entra no `genesis`. Sem `--force`, ela **recusa** gravar se alguma checagem
+falhar.
+
 **Checagens obrigatórias antes de seguir:**
 
 ```
@@ -199,6 +217,15 @@ CREATE TABLE ledger (
   row_hash      TEXT NOT NULL,
   ts            TEXT NOT NULL
 );
+```
+
+Pela linha de comando:
+
+```bash
+uv run python -m src.cli genesis --ledger C:/dados/ledger.sqlite \
+  --data-hash <o data_hash impresso pelo comando data> \
+  --families INTERMERCADO_SP500,ABERTURA_E_GAP,REGIME_DE_VOL
+uv run python -m src.cli verify --ledger C:/dados/ledger.sqlite
 ```
 
 O registro zero carrega:

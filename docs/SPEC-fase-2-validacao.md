@@ -98,6 +98,29 @@ def holdout_split(frame: MarketFrame, months: int = 6) -> tuple[MarketFrame, Mar
 - `holdout_split` separa os últimos N meses. O hold-out vive em outro diretório e
   nunca é lido por `load()`
 
+### Implementado (ferramenta do dia zero)
+
+`backtest/data.py`, com a linha de comando `python -m src.cli data`:
+
+| Função | O que faz |
+|---|---|
+| `read_mt5_csv` | lê a exportação M1 (CSV ou TSV, `<DATE> <TIME>` ou `datetime`) e **soma um minuto**: o MT5 grava a abertura, o frame usa o fechamento |
+| `stitch_by_difference` | emenda contratos ajustando por diferença na última barra em comum; devolve os dias de rolagem |
+| `build_frame` | junta WIN e referências pelo fechamento; barra sem referência é descartada (o robô também não opera nela — `DATA_GAP`) |
+| `alignment_lag` | defasagem de maior correlação entre os retornos; devolve `(defasagem, correlação)`. **0 é o esperado** |
+| `check` | buracos > 3 min dentro do pregão, volume zero, timestamps repetidos, barras por pregão, alinhamento |
+| `split_holdout` | os últimos N meses, gravados em outro diretório |
+| `data_hash` | o `data_hash` do gênesis, sobre o conteúdo do frame |
+| `write_calendar` | `day,bars_expected` para o coletor |
+
+Correlação fraca (abaixo de `MIN_ALIGNMENT_CORR = 0.05`) não reprova o frame: com
+uma referência que não anda junto com o WIN, a defasagem de maior correlação é
+ruído e não diz nada sobre o alinhamento.
+
+`vwap` é calculado como preço típico `(high + low + close) / 3` — o mesmo que o
+robô teria, e por isso o transpilador recusa fórmulas com `vwap` até que essa
+definição seja confirmada contra a fonte de dados.
+
 ## 2.3 `backtest/folds.py` — CPCV
 
 ```python
@@ -111,6 +134,11 @@ Regras:
    Nenhum grupo atravessa o overnight
 2. Combinações: `C(n_groups, k_test)`. Com N=8, k=2 são 28 caminhos
 
+   > **Implementação de referência pronta:** `gate/aggregate.py`
+   > (`aggregate_partitions` + `AggregationPolicy`). Ela exige que a política
+   > (`partitions` ou `paths`), o fator de anualização e o PBO sejam declarados.
+   > `default_aggregate`, que a sessão usa, continua recusando de propósito.
+   >
    > **Nota de terminologia, a resolver no M4.** Em López de Prado, `C(8,2) = 28`
    > é o número de **partições** treino/teste; o número de **caminhos** de
    > backtest completos é `φ = C(N,k)·k/N = 7`. O projeto chama as 28 partições

@@ -33,15 +33,15 @@ src/
   dsl/          ast.py parser.py canonical.py eval_vectorized.py eval_incremental.py ops.py
                 errors.py verdict.py market.py
   ledger/       schema.sql ledger.py
-  backtest/     engine.py api_engine.py runner.py metrics.py costs.py errors.py
-                (folds, execução e dados rodam na API externa — SPEC-fase-2 §2.0)
-  gate/         dsr.py pbo.py robustness.py collapse.py config.py errors.py
+  backtest/     engine.py api_engine.py runner.py metrics.py costs.py data.py errors.py
+                (folds e execução rodam na API externa — SPEC-fase-2 §2.0)
+  gate/         dsr.py pbo.py robustness.py collapse.py config.py aggregate.py errors.py
   orchestrator/ state.py projection.py router.py graph.py budgets.py events.py session.py
   agents/       hypothesis.py formula.py schemas.py client.py
   codegen/      transpiler.py parity.py telemetry.py guards.py templates/robo.mq5.j2
   ops/          coletor.py alerts.py
   reports/      session.py monitor.py charts.py templates/
-  cli.py        genesis · verify · session · report · collect · monitor
+  cli.py        data · genesis · verify · session · report · collect · monitor
   catalog/      families.py reward.py bandit.py metrics.py
 tests/
 docs/
