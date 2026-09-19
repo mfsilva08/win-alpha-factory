@@ -45,11 +45,14 @@ Ordem interna: `ops` → `ast` → `parser` → `canonical` → `eval_vectorized
 **Spec:** `SPEC-fase-1-fundacao.md` seção 1.7
 
 **Aceite:**
-- [ ] Cadeia íntegra após 1.000 appends
-- [ ] Adulteração via SQL direto é detectada por `verify_chain()`
-- [ ] `count()` inclui registros com `crashed=1`
-- [ ] Segundo `genesis()` levanta exceção
-- [ ] Não existe `delete`, `update` nem `reset` no código
+- [x] Cadeia íntegra após 1.000 appends
+- [x] Adulteração via SQL direto é detectada por `verify_chain()`
+- [x] `count()` inclui registros com `crashed=1`
+- [x] Segundo `genesis()` levanta exceção
+- [x] Não existe `delete`, `update` nem `reset` no código
+
+> O registro gênesis **real** só é gravado depois do M0 (dataset e pré-registro
+> hasheados). O código do M2 está pronto; o banco do projeto ainda não existe.
 
 ---
 

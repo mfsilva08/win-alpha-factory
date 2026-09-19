@@ -162,8 +162,8 @@ class GateConfig:
     min_dsr:                 float = 0.95
 
 def load() -> GateConfig:
-    """Lê docs/gate-prereg.md, confere o sha256 contra o registro gênesis do
-    livro-razão, e levanta PreregMismatch se não bater.
+    """Lê docs/gate-prereg.md, confere o sha256 dos bytes do arquivo contra
+    `ledger.genesis_info().prereg_sha256`, e levanta PreregMismatch se não bater.
 
     Levanta PreregIncomplete se sobrar qualquer marcador '<<< DECIDIR >>>'
     no arquivo — o template não pode ser hasheado pela metade."""
@@ -193,6 +193,11 @@ caminhos do CPCV, nunca do número de fórmulas da hipótese atual.
 
 `var_sr` é a variância dos Sharpes observados entre as tentativas do projeto, lida
 do livro-razão.
+
+> **Pendência para o M4.** O livro-razão do M2 não guarda métricas: `payload` é
+> proibido em `kind='backtest'`. Antes do M4 é preciso decidir onde o Sharpe de
+> cada tentativa fica gravado — liberar um `payload` de métricas na zona de
+> verificação ou um armazém separado — sem abrir caminho para a zona de pesquisa.
 
 **Confira as fórmulas contra Bailey & López de Prado (2014) antes de fechar a
 implementação.** Errar um sinal aqui compromete todo o resto. A biblioteca

@@ -302,56 +302,104 @@ mais precisão do que o float64 tem.
 
 ### Schema
 
+A fonte da verdade é `src/ledger/schema.sql`. Resumo:
+
 ```sql
 CREATE TABLE ledger (
   seq            INTEGER PRIMARY KEY AUTOINCREMENT,
   trial_id       TEXT NOT NULL,
-  kind           TEXT NOT NULL CHECK(kind IN ('genesis','backtest','holdout')),
+  kind           TEXT NOT NULL
+                 CHECK(kind IN ('genesis','backtest','holdout','kill','daily')),
   hypothesis_id  TEXT,
   ast_hash       TEXT,
   structural_sig TEXT,
   data_hash      TEXT NOT NULL,
   config_hash    TEXT NOT NULL,
   verdict        TEXT,
-  crashed        INTEGER NOT NULL DEFAULT 0,
+  crashed        INTEGER NOT NULL DEFAULT 0 CHECK(crashed IN (0, 1)),
+  payload        TEXT,           -- JSON canônico; só genesis, kill e daily
   prev_hash      TEXT NOT NULL,
   row_hash       TEXT NOT NULL,
   ts             TEXT NOT NULL
 );
 CREATE INDEX idx_struct ON ledger(structural_sig);
 CREATE INDEX idx_hyp    ON ledger(hypothesis_id);
+CREATE INDEX idx_kind   ON ledger(kind);
+CREATE UNIQUE INDEX idx_one_genesis ON ledger(kind) WHERE kind = 'genesis';
+-- gatilhos BEFORE UPDATE e BEFORE DELETE abortam: append-only no próprio banco
 ```
+
+| `kind` | Conta tentativa? | Exige | `payload` |
+|---|---|---|---|
+| `genesis` | não | só via `genesis()`, sempre `seq = 1` | `{prereg_sha256, catalog_sha256}` |
+| `backtest` | **sim** | `ast_hash`, `structural_sig`; `data_hash` igual ao do gênesis | proibido |
+| `holdout` | **sim** | `ast_hash`, `structural_sig`; `data_hash` do hold-out | proibido |
+| `kill` | não | `hypothesis_id`; nunca `crashed` | valor agregado, data, métrica |
+| `daily` | não | `hypothesis_id`; nunca `crashed` | o `DailySummary` do coletor |
+
+Todo registro precisa ter o `config_hash` do gênesis, ou `append` levanta
+`ProjectMismatch`: mudar o pré-registro ou o catálogo é outro projeto.
+
+Métricas de backtest **não** moram no livro-razão por enquanto (`payload` proibido
+em `backtest`). O M4 precisa decidir onde fica o Sharpe de cada tentativa, que
+o `var_sr` do §2.8 lê — ver pendência no SPEC-fase-2.
 
 ### API
 
 ```python
 class Ledger:
-    def genesis(self, data_hash: str, config_hash: str) -> None
+    def __init__(self, path: Path | str, clock: Callable[[], datetime] = utc_now)
+    def genesis(self, data_hash: str, prereg_sha256: str, catalog_sha256: str) -> str
     def append(self, rec: LedgerRecord) -> str      # devolve row_hash
-    def count(self, kind: str = "backtest") -> int
+    def count(self, kind: Kind | None = None) -> int
     def head(self) -> str
     def verify_chain(self) -> bool
     def seen_structural(self, sig: str) -> bool
     def verdicts_for(self, hypothesis_id: str) -> list[Verdict]
+    def genesis_info(self) -> GenesisInfo           # zona de verificação
+    def records(self, kind: Kind | None = None) -> list[StoredRecord]   # idem
 ```
 
-`row_hash = sha256(prev_hash + trial_id + ast_hash + data_hash + config_hash + ts)`
+`config_hash = sha256(prereg_sha256 + catalog_sha256)` (concatenação dos dois
+hashes em hex). O gênesis guarda os dois componentes no `payload`, para que
+`GateConfig.load()` compare só o pré-registro.
+
+`row_hash = sha256(json_canônico(todas as colunas exceto row_hash))`, com
+`seq`, `kind`, `verdict`, `crashed`, `payload` e `ts` incluídos. JSON canônico:
+chaves ordenadas, sem espaços, UTF-8, sem `NaN`. Alterar **qualquer** coluna de
+qualquer linha quebra a cadeia.
+
+`ts` é UTC com microssegundos. O relógio é injetável para teste.
+
+`seen_structural` e `verdicts_for` são as únicas leituras que podem alimentar a
+zona de pesquisa, e só através da projeção (R1).
 
 ### Regras
 
-- `count()` conta apenas `kind='backtest'` e `kind='holdout'`, incluindo os que têm
-  `crashed=1`
+- `count()` sem argumento conta apenas `kind='backtest'` e `kind='holdout'`,
+  incluindo os que têm `crashed=1`. `count(Kind.X)` conta um tipo específico
 - Não existe `delete`, `update` nem `reset`. Se essas funções aparecerem no código,
-  é bug
-- Escrita serializada: uma única conexão, `PRAGMA journal_mode=WAL`, transação por
-  append
+  é bug. O banco reforça com gatilhos que abortam UPDATE e DELETE
+- Escrita serializada: uma única conexão, `PRAGMA journal_mode=WAL`,
+  `synchronous=FULL`, transação `BEGIN IMMEDIATE` por append, com o `prev_hash`
+  lido dentro da transação
+- O arquivo `.sqlite` **não** deve ficar em pasta sincronizada (OneDrive, Dropbox):
+  a sincronização de arquivos WAL abertos corrompe o banco
+
+**Limite conhecido.** A cadeia detecta qualquer alteração isolada. Quem reescrever
+uma linha **e recalcular todas as seguintes** produz uma cadeia válida. A defesa é
+ancorar `head()` fora do banco: o relatório de sessão imprime o `head` antes e
+depois, e esse HTML fica versionado.
 
 ### Testes obrigatórios
 
 ```
 - append de 1.000 registros mantém verify_chain() == True
 - adulterar uma linha via SQL direto faz verify_chain() == False
+  (os gatilhos barram o UPDATE; o teste os derruba e confirma que o hash pega)
+- alterar qualquer coluna, ou apagar uma linha, faz verify_chain() == False
 - count() após 5 appends sendo 2 crashed retorna 5
+- kill e daily não entram em count()
 - genesis duas vezes levanta exceção
 ```
 

@@ -179,6 +179,12 @@ FAMILIES = [
 
 Criar o banco vazio e gravar o registro zero. Esse registro é a certidão de nascimento do projeto.
 
+> O schema abaixo é o esboço original. O definitivo está em `src/ledger/schema.sql`
+> e na SPEC-fase-1 §1.7 (inclui `crashed`, `payload`, `kind` de `kill` e `daily`,
+> e hash sobre todas as colunas). O gênesis é gravado por
+> `Ledger(path).genesis(data_hash, prereg_sha256, catalog_sha256)`, com o banco
+> **fora** do OneDrive.
+
 ```sql
 CREATE TABLE ledger (
   seq           INTEGER PRIMARY KEY AUTOINCREMENT,

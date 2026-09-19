@@ -1,0 +1,3 @@
+# Quebras de linha fixas em LF: gate-prereg.md e o catálogo são hasheados no gênesis,
+# e uma conversão para CRLF no checkout mudaria o sha256.
+* text=auto eol=lf

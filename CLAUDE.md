@@ -161,7 +161,7 @@ Esta lista existe porque cada item parece uma melhoria óbvia e destrói o siste
 
 ```bash
 uv run pytest                       # tudo
-uv run mypy --strict src/dsl tests  # tipagem
+uv run mypy --strict src tests      # tipagem
 uv run ruff check src tests         # lint
 uv run pytest tests/test_projection.py -v   # o teste mais importante do projeto
 uv run python -m src.cli session --hypothesis docs/exemplos/h001.yaml
